@@ -11,6 +11,8 @@ It's a static site: plain HTML, CSS and JavaScript, with no build step. Answers 
 - **Create a poll:** pick the days, the hours, the slot length and the time zone those hours are in. You get a link to share.
 - **Answer a poll:** type your name, then mark each day separately by dragging up or down that day's column, or tapping single slots. Changes save automatically. Typing the same name later lets you edit your times.
 - **Group view:** the darker a time, the more people can make it. Point at or tap a time to see a pop-up of who's free and who isn't.
+- **Hours you see:** each person picks which hours to show, like 7:00 to midnight in their own time zone. Polls that run more than 16 hours a day start that way automatically, so nobody has to scroll past the middle of their night. **Show all hours** brings everything back. Long polls also get shorter rows and scroll inside their panel.
+- **Only hours someone can make:** a tick box on the group grid hides hours nobody has marked.
 - **Days apart:** when the chosen days aren't next to each other (say, three weekends), a dotted break separates them in the grid.
 - **Best times:** a ranked list of the time blocks the most people can make. Point at one to highlight it on the grid.
 - **Finding your time zone:** type a city, country, abbreviation or offset ("Kraków", "Boston", "Ireland", "EST", "GMT+1") and pick from the matches, which show each zone's current time. If you've switched away from your own zone, a link switches you back.
@@ -81,3 +83,7 @@ To run it on your computer, serve the folder with any local web server, for exam
 - **Updates:** the group grid refreshes every 5 seconds while the page is open.
 - **Supabase free plan:** projects are paused after about a week with no activity. If the site stops loading responses, open your Supabase dashboard and restore the project. Your data is kept.
 - **Limits:** a poll can have up to 2,000 time slots (for example, 6 weeks of 9:00 to 21:00 in 15-minute slots is too many, but in 30-minute slots it fits).
+
+## Credits
+
+Hourglass photo by [Aron Visuals](https://unsplash.com/@aronvisuals) on [Unsplash](https://unsplash.com/photos/selective-focus-photo-of-brown-and-blue-hourglass-on-stones-BXOXnQ26B7o).

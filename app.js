@@ -421,17 +421,20 @@ function prevDayKey(key) {
   const t = new Date(Date.UTC(y, m - 1, d - 1));
   return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
 }
-function buildLayout(slots, tz, step) {
+// `startAt` (minutes) forces where each column's day begins, e.g. the start of the viewer's chosen hours.
+function buildLayout(slots, tz, step, startAt = null) {
   const local = slots.map((ms) => { const p = partsIn(ms, tz); return { ms, key: keyOf(p), tod: p.h * 60 + p.min }; });
   const tods = [...new Set(local.map((s) => s.tod))].sort((a, b) => a - b);
   let dayStart = 0;
-  if (tods.length > 1) {
+  if (startAt != null) dayStart = startAt;
+  else if (tods.length > 1) {
     let best = -1, bestIdx = tods.length - 1;
     tods.forEach((t, i) => {
       const gap = i < tods.length - 1 ? tods[i + 1] - t : tods[0] + 1440 - t;
       if (gap > best) { best = gap; bestIdx = i; }
     });
-    dayStart = tods[(bestIdx + 1) % tods.length];
+    // Only shift the day for a real overnight break; near round-the-clock polls use plain calendar days.
+    dayStart = best >= 180 ? tods[(bestIdx + 1) % tods.length] : 0;
   }
   const colSet = new Set();
   const rowSet = new Set();
@@ -486,7 +489,7 @@ function rangeLabel(start, end, tz) {
   const nextDay = keyOf(a) !== keyOf(b) && bMin !== 0;
   return {
     day: fmtDay(keyOf(a), { weekday: 'short', day: 'numeric', month: 'short' }),
-    time: `${fmtTime(aMin)} – ${fmtTime(bMin)}${nextDay ? ' (next day)' : ''}`,
+    time: `${fmtTime(aMin)} – ${bMin === 0 ? 'midnight' : fmtTime(bMin)}${nextDay ? ' (next day)' : ''}`,
   };
 }
 
@@ -845,6 +848,9 @@ async function showPoll(store, id) {
     mineEls: [], groupEls: [], groupByMs: new Map(),
     hover: null,
     removeArmed: false,
+    hours: ls.get('findatime:hours:' + id, null), // { from, to } in the viewer's own clock, minutes
+    answeredOnly: ls.get('findatime:answered:' + id, false),
+    mineRows: new Set(),
   };
 
   app.innerHTML = `
@@ -873,6 +879,13 @@ async function showPoll(store, id) {
         <div class="tz-host"></div>
         <span class="tz-note"></span>
       </div>
+      <div class="hours-line">
+        <label for="hours-from">Show</label>
+        <select id="hours-from" aria-label="Show hours from"></select>
+        <span>to</span>
+        <select id="hours-to" aria-label="Show hours until"></select>
+        <span class="hours-note"></span>
+      </div>
 
       <div class="tabs" role="tablist">
         <button type="button" role="tab" data-tab="mine" aria-selected="true">Your availability</button>
@@ -893,7 +906,9 @@ async function showPoll(store, id) {
             <h2 id="group-h">Group availability</h2>
             <div class="legend" aria-hidden="true"><span class="legend-lo">0</span><span class="legend-bar"></span><span class="legend-hi">0</span></div>
           </div>
+          <label class="toggle"><input type="checkbox" class="answered-only"${S.answeredOnly ? ' checked' : ''}> Only show hours someone can make</label>
           <div class="grid-wrap"><div class="grid group-grid"></div></div>
+          <p class="grid-empty group-empty" hidden></p>
         </section>
 
         <aside class="side">
@@ -911,7 +926,6 @@ async function showPoll(store, id) {
 
   const $ = (s) => app.querySelector(s);
   const board = $('.board');
-  board.style.setProperty('--cell-h', ({ 15: '1.2rem', 30: '1.75rem', 60: '2.6rem' })[S.step] || '1.75rem');
   const mineBody = $('.mine-body');
   const meLine = $('.me-line');
   const groupGrid = $('.group-grid');
@@ -933,18 +947,38 @@ async function showPoll(store, id) {
     return list;
   }
 
-  /* ---- grid markup shared by both grids ---- */
-  function gridHtml(kind) {
+  /* ---- which rows and days each grid shows ---- */
+  const realTod = (r) => (S.L.rows[r] + S.L.dayStart) % 1440;
+  function inHours(t) {
+    const h = S.hours;
+    if (!h || (h.from === 0 && h.to === 1440)) return true;
+    return h.from < h.to ? t >= h.from && t < h.to : t >= h.from || t < h.to;
+  }
+  // Rows (by index into S.L.rows) and columns a grid should show.
+  function visible(kind, counts) {
     const L = S.L;
-    const rows = L.rows;
+    let R = L.rows.map((_, r) => r).filter((r) => inHours(realTod(r)));
+    if (kind === 'group' && S.answeredOnly && counts) R = R.filter((r) => L.ms[r].some((ms) => ms != null && counts.get(ms) > 0));
+    const C = L.cols.map((_, c) => c).filter((c) => R.some((r) => L.ms[r][c] != null));
+    return { R, C };
+  }
+  const dayNum = (k) => { const [y, m, d] = k.split('-').map(Number); return Date.UTC(y, m - 1, d) / 86400000; };
+  const gapsFor = (C) => C.map((c, i) => i > 0 && dayNum(S.L.cols[c]) - dayNum(S.L.cols[C[i - 1]]) > 1);
+
+  /* ---- grid markup shared by both grids ---- */
+  function gridHtml(kind, R, C) {
+    const L = S.L;
+    const gaps = gapsFor(C);
     let h = '<div class="corner"></div>';
-    for (const [i, c] of L.cols.entries()) {
-      if (L.gapBefore[i]) h += '<div class="day-gap head" aria-hidden="true"></div>';
-      h += `<div class="colhead"><span class="dow">${esc(fmtDay(c, { weekday: 'short' }))}</span><span class="dom">${esc(fmtDay(c, { day: 'numeric', month: 'short' }))}</span></div>`;
-    }
-    let anchor = rows[0];
-    rows.forEach((off, r) => {
-      if (r > 0 && off - rows[r - 1] > S.step) {
+    C.forEach((c, i) => {
+      if (gaps[i]) h += '<div class="day-gap head" aria-hidden="true"></div>';
+      const col = L.cols[c];
+      h += `<div class="colhead"><span class="dow">${esc(fmtDay(col, { weekday: 'short' }))}</span><span class="dom">${esc(fmtDay(col, { day: 'numeric', month: 'short' }))}</span></div>`;
+    });
+    let anchor = L.rows[R[0]];
+    R.forEach((r, i) => {
+      const off = L.rows[r];
+      if (i > 0 && off - L.rows[R[i - 1]] > S.step) {
         h += '<div class="gap" aria-hidden="true"></div>';
         anchor = off;
       }
@@ -953,10 +987,10 @@ async function showPoll(store, id) {
       const label = (off - anchor) % 60 === 0 ? fmtTime(tod) : '';
       const hourEnd = (off + S.step - anchor) % 60 === 0;
       h += `<div class="tl${nextDay && label ? ' next' : ''}"${nextDay && label ? ' title="Next day"' : ''}>${esc(label)}</div>`;
-      L.cols.forEach((col, c) => {
-        if (L.gapBefore[c]) h += '<div class="day-gap" aria-hidden="true"></div>';
+      C.forEach((c, j) => {
+        if (gaps[j]) h += '<div class="day-gap" aria-hidden="true"></div>';
         if (L.ms[r][c] == null) { h += '<div class="cell off" aria-hidden="true"></div>'; return; }
-        const realDay = nextDay ? keyOf(partsIn(L.ms[r][c], S.tz)) : col;
+        const realDay = nextDay ? keyOf(partsIn(L.ms[r][c], S.tz)) : L.cols[c];
         const aria = `${fmtDay(realDay, { weekday: 'long', day: 'numeric', month: 'long' })}, ${fmtTime(tod)}`;
         h += `<button type="button" class="cell${hourEnd ? ' hr' : ''}" data-r="${r}" data-c="${c}" tabindex="-1" aria-label="${esc(aria)}"${kind === 'mine' ? ' aria-pressed="false"' : ''}></button>`;
       });
@@ -970,13 +1004,17 @@ async function showPoll(store, id) {
     if (first) first.tabIndex = 0;
     return els;
   }
-  function setGridColumns(grid) {
+  // Column tracks, plus a row height that keeps long polls from getting huge.
+  function sizeGrid(grid, R, C) {
     const tracks = ['var(--tl-w)'];
-    S.L.cols.forEach((c, i) => {
-      if (S.L.gapBefore[i]) tracks.push('var(--day-gap)');
+    gapsFor(C).forEach((g) => {
+      if (g) tracks.push('var(--day-gap)');
       tracks.push('minmax(var(--cell-min), 1fr)');
     });
     grid.style.gridTemplateColumns = tracks.join(' ');
+    const base = ({ 15: 1.2, 30: 1.75, 60: 2.6 })[S.step] || 1.75;
+    const h = Math.max(1.15, Math.min(base, 38 / Math.max(R.length, 1)));
+    grid.style.setProperty('--cell-h', `${h.toFixed(2)}rem`);
   }
 
   /* ---- your availability ---- */
@@ -1019,8 +1057,15 @@ async function showPoll(store, id) {
         <button type="button" class="link-btn danger" data-act="remove">Remove my response</button>
       </div>`;
     const grid = mineBody.querySelector('.mine-grid');
-    setGridColumns(grid);
-    grid.innerHTML = gridHtml('mine');
+    const { R, C } = visible('mine');
+    S.mineRows = new Set(R);
+    if (!R.length) {
+      grid.outerHTML = '<p class="grid-empty">None of this poll\'s times fall within the hours you\'re showing. <button type="button" class="link-btn" data-act="hours-all">Show all hours</button></p>';
+      S.mineEls = [];
+      return;
+    }
+    sizeGrid(grid, R, C);
+    grid.innerHTML = gridHtml('mine', R, C);
     S.mineEls = collect(grid);
     paintMine();
     wireMineGrid(grid);
@@ -1067,6 +1112,7 @@ async function showPoll(store, id) {
       if (!drag) return;
       const R = rect();
       for (let r = R.rMin; r <= R.rMax; r++) for (let c = R.cMin; c <= R.cMax; c++) {
+        if (!S.mineRows.has(r)) continue; // skip hours that are hidden
         const ms = S.L.ms[r][c];
         if (ms == null) continue;
         if (R.add) S.mine.add(ms); else S.mine.delete(ms);
@@ -1142,17 +1188,35 @@ async function showPoll(store, id) {
   function renderGroup() {
     const P = people();
     const N = P.length;
-    if (!groupGrid.dataset.built) {
-      setGridColumns(groupGrid);
-      groupGrid.innerHTML = gridHtml('group');
-      S.groupEls = collect(groupGrid);
+    const counts = new Map(S.slots.map((ms) => [ms, P.reduce((a, p) => a + (p.set.has(ms) ? 1 : 0), 0)]));
+    const { R, C } = visible('group', counts);
+    const sig = `${S.tz}|${R.join(',')}|${C.join(',')}`;
+    if (groupGrid.dataset.sig !== sig) {
+      groupGrid.dataset.sig = sig;
+      hideTip();
       S.groupByMs = new Map();
-      S.groupEls.forEach((row, r) => row.forEach((el, c) => { if (el) S.groupByMs.set(S.L.ms[r][c], el); }));
-      groupGrid.dataset.built = '1';
-      wireGroupGrid();
+      S.groupEls = [];
+      const empty = $('.group-empty');
+      if (!R.length) {
+        groupGrid.innerHTML = '';
+        groupGrid.style.gridTemplateColumns = '';
+        empty.innerHTML = S.answeredOnly && N === 0
+          ? 'Nobody has added their times yet.'
+          : S.answeredOnly
+            ? 'Nobody can make any of the hours you\'re showing. <button type="button" class="link-btn" data-act="answered-off">Show every hour</button>'
+            : 'None of this poll\'s times fall within the hours you\'re showing. <button type="button" class="link-btn" data-act="hours-all">Show all hours</button>';
+        empty.hidden = false;
+      } else {
+        empty.hidden = true;
+        sizeGrid(groupGrid, R, C);
+        groupGrid.innerHTML = gridHtml('group', R, C);
+        S.groupEls = collect(groupGrid);
+        S.groupEls.forEach((row, r) => row.forEach((el, c) => { if (el) S.groupByMs.set(S.L.ms[r][c], el); }));
+      }
+      if (!groupGrid.dataset.wired) { wireGroupGrid(); groupGrid.dataset.wired = '1'; }
     }
     for (const [ms, el] of S.groupByMs) {
-      const n = P.reduce((a, p) => a + (p.set.has(ms) ? 1 : 0), 0);
+      const n = counts.get(ms) || 0;
       el.style.setProperty('--hp', N ? `${Math.round((n / N) * 100)}%` : '0%');
       el.classList.toggle('all', N > 0 && n === N);
       el.dataset.n = n;
@@ -1274,10 +1338,57 @@ async function showPoll(store, id) {
       S.tz !== poll.tz ? `The poll was set up in ${esc(zoneDisplay(poll.tz))}.` : '',
       S.tz !== detected ? `<button type="button" class="link-btn" data-act="tz-mine">Use my time zone (${esc(zoneDisplay(detected))})</button>` : '',
     ].filter(Boolean).join(' ');
-    delete groupGrid.dataset.built;
+    renderHours();
+    relayout();
+    delete groupGrid.dataset.sig;
     renderMine();
     renderGroup();
   }
+
+  /* ---- which hours to show ---- */
+  // Nobody has chosen yet: long polls start on 7:00 to midnight in your own time.
+  function effectiveHours() {
+    if (S.hours) return S.hours;
+    const spanH = (S.L.rows.length * S.step) / 60;
+    return spanH > 16 ? { from: 420, to: 1440, auto: true } : { from: 0, to: 1440 };
+  }
+  function renderHours() {
+    S.hours = effectiveHours();
+    const from = $('#hours-from'), to = $('#hours-to');
+    let fo = '', to_ = '';
+    for (let t = 0; t < 1440; t += 60) fo += `<option value="${t}"${t === S.hours.from ? ' selected' : ''}>${fmtTime(t)}</option>`;
+    for (let t = 60; t <= 1440; t += 60) to_ += `<option value="${t}"${t === S.hours.to ? ' selected' : ''}>${t === 1440 ? 'Midnight' : fmtTime(t)}</option>`;
+    from.innerHTML = fo;
+    to.innerHTML = to_;
+    const shown = S.L.rows.filter((_, r) => inHours(realTod(r))).length;
+    const hidden = ((S.L.rows.length - shown) * S.step) / 60;
+    const fmtH = (h) => `${Number.isInteger(h) ? h : h.toFixed(1)} hour${h === 1 ? '' : 's'}`;
+    $('.hours-note').innerHTML = hidden > 0
+      ? `${S.hours.auto ? 'This poll runs long, so hours outside your day are hidden' : `${fmtH(hidden)} of the poll hidden`}. <button type="button" class="link-btn" data-act="hours-all">Show all hours</button>`
+      : 'in your time';
+  }
+  function relayout() {
+    const h = S.hours;
+    const filtered = h && !(h.from === 0 && h.to === 1440);
+    S.L = buildLayout(S.slots, S.tz, S.step, filtered ? h.from : null);
+  }
+  function setHours(h) {
+    S.hours = h;
+    ls.set('findatime:hours:' + id, h);
+    relayout();
+    renderHours();
+    delete groupGrid.dataset.sig;
+    renderMine();
+    renderGroup();
+  }
+  const readHours = () => ({ from: +$('#hours-from').value, to: +$('#hours-to').value });
+  $('#hours-from').addEventListener('change', () => setHours(readHours()));
+  $('#hours-to').addEventListener('change', () => setHours(readHours()));
+  $('.answered-only').addEventListener('change', (e) => {
+    S.answeredOnly = e.target.checked;
+    ls.set('findatime:answered:' + id, S.answeredOnly);
+    renderGroup();
+  });
   function setTz(z) {
     S.tz = z;
     ls.set('findatime:tz', S.tz);
@@ -1305,6 +1416,8 @@ async function showPoll(store, id) {
       f.pw.focus();
     }
     if (a === 'tz-mine') setTz(detectTz());
+    if (a === 'hours-all') setHours({ from: 0, to: 1440 });
+    if (a === 'answered-off') { $('.answered-only').checked = false; S.answeredOnly = false; ls.set('findatime:answered:' + id, false); renderGroup(); }
     if (a === 'unlock-cancel') $('.unlock').hidden = true;
     if (a === 'change-name') {
       clearTimeout(saveTimer);

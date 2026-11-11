@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Find a time</title>
   <meta name="description" content="Mark when you're free and see the times that work for the whole group, in your own time zone.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%231F5C3A'/%3E%3Crect x='7' y='7' width='8' height='8' rx='2' fill='%23B8853F'/%3E%3Crect x='17' y='7' width='8' height='8' rx='2' fill='%238DBB9C'/%3E%3Crect x='7' y='17' width='8' height='8' rx='2' fill='%238DBB9C'/%3E%3Crect x='17' y='17' width='8' height='8' rx='2' fill='%23B8853F'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:opsz,wght@12..96,500..800&display=swap" rel="stylesheet">
@@ -16,9 +17,12 @@
     Demo mode: answers are only saved in this browser. Add your Supabase details to <code>config.js</code> to share polls with your group.
   </div>
   <header class="site">
-    <a class="brand" href="./" data-site-name>Find a time</a>
+    <a class="brand" href="./"><img class="brand-logo" src="logo.png" alt="" width="32" height="32"><span data-site-name>Find a time</span></a>
   </header>
   <main id="app" class="wrap"></main>
+  <footer class="site-foot">
+    Photo by <a href="https://unsplash.com/@aronvisuals?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Aron Visuals</a> on <a href="https://unsplash.com/photos/selective-focus-photo-of-brown-and-blue-hourglass-on-stones-BXOXnQ26B7o?utm_source=unsplash&amp;utm_medium=referral&amp;utm_content=creditCopyText">Unsplash</a>
+  </footer>
   <script src="config.js"></script>
   <script type="module" src="app.js"></script>
 </body>
