@@ -907,6 +907,7 @@ async function showPoll(store, id) {
             <div class="legend" aria-hidden="true"><span class="legend-lo">0</span><span class="legend-bar"></span><span class="legend-hi">0</span></div>
           </div>
           <label class="toggle"><input type="checkbox" class="answered-only"${S.answeredOnly ? ' checked' : ''}> Only show hours someone can make</label>
+          <div class="day-nav" hidden><button type="button" class="btn day-prev" aria-label="Earlier days">‹ Earlier</button><span class="day-nav-hint">More days this way. Swipe or tap.</span><button type="button" class="btn day-next" aria-label="Later days">Later ›</button></div>
           <div class="grid-wrap"><div class="grid group-grid"></div></div>
           <p class="grid-empty group-empty" hidden></p>
         </section>
@@ -1175,6 +1176,30 @@ async function showPoll(store, id) {
     grid.style.setProperty('--cell-h', `${h.toFixed(2)}rem`);
   }
 
+  /* ---- buttons for days that don't fit on screen ---- */
+  function wireDayNav(wrap) {
+    const nav = wrap.previousElementSibling;
+    if (!nav || !nav.classList.contains('day-nav') || wrap.dataset.nav) return;
+    wrap.dataset.nav = '1';
+    const prev = nav.querySelector('.day-prev'), next = nav.querySelector('.day-next');
+    const update = () => {
+      const over = wrap.scrollWidth > wrap.clientWidth + 2;
+      nav.hidden = !over;
+      prev.disabled = wrap.scrollLeft <= 2;
+      next.disabled = wrap.scrollLeft + wrap.clientWidth >= wrap.scrollWidth - 2;
+    };
+    const page = (dir) => {
+      const tl = wrap.querySelector('.corner');
+      const by = wrap.clientWidth - (tl ? tl.offsetWidth : 0) - 8;
+      wrap.scrollBy({ left: dir * Math.max(by, 60), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    };
+    prev.addEventListener('click', () => page(-1));
+    next.addEventListener('click', () => page(1));
+    wrap.addEventListener('scroll', update, { passive: true });
+    if ('ResizeObserver' in window) new ResizeObserver(update).observe(wrap);
+    update();
+  }
+
   /* ---- your availability ---- */
   function renderMine() {
     if (!S.me) {
@@ -1208,7 +1233,8 @@ async function showPoll(store, id) {
       <span>Marking as <strong>${esc(S.me.name)}</strong></span>
       <button type="button" class="link-btn" data-act="change-name">Not you?</button>`;
     mineBody.innerHTML = `
-      <p class="hint">Mark each day separately: drag up or down a day to highlight the times you're free, or tap a single slot. Drag over highlighted times to clear them.</p>
+      <p class="hint">Drag up or down a day to mark when you're free, or tap single slots. Drag over marked times to clear them.</p>
+      <div class="day-nav" hidden><button type="button" class="btn day-prev" aria-label="Earlier days">‹ Earlier</button><span class="day-nav-hint">More days this way. Swipe or tap.</span><button type="button" class="btn day-next" aria-label="Later days">Later ›</button></div>
       <div class="grid-wrap"><div class="grid mine-grid"></div></div>
       <div class="mine-foot">
         <span class="save-status" aria-live="polite"></span>
@@ -1227,6 +1253,7 @@ async function showPoll(store, id) {
     S.mineEls = collect(grid);
     paintMine();
     wireMineGrid(grid);
+    wireDayNav(grid.closest('.grid-wrap'));
   }
 
   function paintMine(preview) {
@@ -1246,20 +1273,43 @@ async function showPoll(store, id) {
       rMin: Math.min(drag.r0, drag.r1), rMax: Math.max(drag.r0, drag.r1),
       cMin: Math.min(drag.c0, drag.c1), cMax: Math.max(drag.c0, drag.c1), add: drag.add,
     });
+    // Mouse: press and drag marks times straight away.
+    // Touch: wait to see which way the finger goes. Sideways scrolls the days,
+    // up or down marks times, and a tap without moving toggles one slot.
+    const wrap = grid.closest('.grid-wrap');
+    let pending = null;
+    let pan = null;
+    const startDrag = (r, c) => {
+      drag = { r0: r, c0: c, r1: r, c1: c, add: !S.mine.has(S.L.ms[r][c]) };
+      paintMine(rect());
+    };
+    const cellAt = (x, y) => {
+      const el = document.elementFromPoint(x, y);
+      const cell = el && el.closest && el.closest('.cell[data-r]');
+      return cell && grid.contains(cell) ? cell : null;
+    };
     grid.addEventListener('pointerdown', (e) => {
       const cell = e.target.closest('.cell[data-r]');
       if (!cell || e.button > 0) return;
       e.preventDefault();
       grid.setPointerCapture(e.pointerId);
       const r = +cell.dataset.r, c = +cell.dataset.c;
-      drag = { r0: r, c0: c, r1: r, c1: c, add: !S.mine.has(S.L.ms[r][c]) };
-      paintMine(rect());
+      if (e.pointerType === 'mouse') startDrag(r, c);
+      else pending = { x: e.clientX, y: e.clientY, r, c };
     });
     grid.addEventListener('pointermove', (e) => {
+      if (pan) { wrap.scrollLeft = pan.left - (e.clientX - pan.x); return; }
+      if (pending) {
+        const dx = e.clientX - pending.x, dy = e.clientY - pending.y;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
+        if (Math.abs(dx) > Math.abs(dy)) pan = { x: pending.x, left: wrap.scrollLeft };
+        else startDrag(pending.r, pending.c);
+        pending = null;
+        if (pan) { wrap.scrollLeft = pan.left - dx; return; }
+      }
       if (!drag) return;
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const cell = el && el.closest && el.closest('.cell[data-r]');
-      if (!cell || !grid.contains(cell)) return;
+      const cell = cellAt(e.clientX, e.clientY);
+      if (!cell) return;
       // Each drag stays in the day it started on: only the time moves.
       const r = +cell.dataset.r;
       if (r === drag.r1) return;
@@ -1267,6 +1317,8 @@ async function showPoll(store, id) {
       paintMine(rect());
     });
     const finish = () => {
+      if (pan) { pan = null; return; }
+      if (pending) { startDrag(pending.r, pending.c); pending = null; } // a tap
       if (!drag) return;
       const R = rect();
       for (let r = R.rMin; r <= R.rMax; r++) for (let c = R.cMin; c <= R.cMax; c++) {
@@ -1280,7 +1332,7 @@ async function showPoll(store, id) {
       mineChanged();
     };
     grid.addEventListener('pointerup', finish);
-    grid.addEventListener('pointercancel', finish);
+    grid.addEventListener('pointercancel', () => { drag = null; pending = null; pan = null; paintMine(); });
     grid.addEventListener('lostpointercapture', finish);
     grid.addEventListener('click', (e) => {
       const cell = e.target.closest('.cell[data-r]');
@@ -1371,7 +1423,8 @@ async function showPoll(store, id) {
         S.groupEls = collect(groupGrid);
         S.groupEls.forEach((row, r) => row.forEach((el, c) => { if (el) S.groupByMs.set(S.L.ms[r][c], el); }));
       }
-      if (!groupGrid.dataset.wired) { wireGroupGrid(); groupGrid.dataset.wired = '1'; }
+      if (!groupGrid.dataset.wired) { wireGroupGrid(); wireDayNav(groupGrid.closest('.grid-wrap')); groupGrid.dataset.wired = '1'; }
+      groupGrid.closest('.grid-wrap').dispatchEvent(new Event('scroll'));
     }
     for (const [ms, el] of S.groupByMs) {
       const n = counts.get(ms) || 0;

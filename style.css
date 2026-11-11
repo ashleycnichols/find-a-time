@@ -257,7 +257,7 @@ button, input, select { font: inherit; color: inherit; }
 }
 
 /* ---------- Grid ---------- */
-.grid-wrap { overflow: auto; max-height: min(74vh, 860px); margin: 0 -4px; padding: 0 4px 4px; overscroll-behavior: contain; }
+.grid-wrap { overflow: auto; max-height: min(74vh, 860px); padding: 0 0 4px; overscroll-behavior: contain; }
 .grid-empty { color: var(--muted); font-size: .95rem; padding: 12px 0; margin: 0; }
 .grid { display: grid; user-select: none; -webkit-user-select: none; min-width: min-content; }
 .corner { position: sticky; left: 0; top: 0; background: var(--surface); z-index: 4; }
@@ -299,7 +299,12 @@ button, input, select { font: inherit; color: inherit; }
 }
 .cell:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; position: relative; z-index: 3; }
 
-.mine-grid { touch-action: none; }
+/* The grid handles touch itself: sideways swipes scroll the days, up-and-down drags mark times. */
+.mine-grid .cell[data-r] { touch-action: none; }
+.day-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 10px; }
+.day-nav .btn { padding: 6px 12px; font-size: .9rem; }
+.day-nav .btn:disabled { opacity: .35; cursor: default; }
+.day-nav-hint { font-size: .8rem; color: var(--muted); text-align: center; }
 .mine-grid .cell.on { background: var(--mine); border-left-color: var(--mine-edge); border-bottom-color: color-mix(in oklab, var(--mine-edge) 60%, var(--mine)); }
 .mine-grid .cell:hover:not(.on):not(.off) { background: color-mix(in oklab, var(--mine) 30%, var(--sunk)); }
 
@@ -376,7 +381,7 @@ button, input, select { font: inherit; color: inherit; }
   .create-form { grid-row: auto; }
 }
 @media (max-width: 760px) {
-  :root { --tl-w: 3.9rem; --cell-min: 3rem; }
+  :root { --tl-w: 3.6rem; --cell-min: 2.7rem; }
   .board { grid-template-columns: minmax(0, 1fr); }
   .board[data-tab="mine"] .group-panel, .board[data-tab="group"] .mine-panel { display: none; }
   .tabs {
