@@ -912,6 +912,7 @@ async function showPoll(store, id) {
           <p class="grid-empty group-empty" hidden></p>
         </section>
 
+        <button type="button" class="btn see-results" data-act="see-results">See results</button>
         <aside class="side">
           <div class="side-block">
             <h2>Best times</h2>
@@ -1546,6 +1547,7 @@ async function showPoll(store, id) {
       });
     }
     $('.people-h').textContent = `Responses (${N})`;
+    $('.see-results').textContent = `See results (${N} ${N === 1 ? 'response' : 'responses'})`;
     $('.people').innerHTML = P.length
       ? P.map((p) => `<li><span class="person">${esc(p.name)}${p.me ? ' <span class="you">(you)</span>' : ''}</span><span class="person-tz">${esc(p.tz ? tzName(p.tz.split('/').pop()) : '')}</span></li>`).join('')
       : '<li class="none">No responses yet.</li>';
@@ -1641,6 +1643,10 @@ async function showPoll(store, id) {
       f.pw.focus();
     }
     if (a === 'tz-mine') setTz(detectTz());
+    if (a === 'see-results') {
+      switchTab('group');
+      $('.tabs').scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    }
     if (a === 'hours-all') setHours({ from: 0, to: 1440 });
     if (a === 'answered-off') { $('.answered-only').checked = false; S.answeredOnly = false; ls.set('findatime:answered:' + id, false); renderGroup(); }
     if (a === 'unlock-cancel') $('.unlock').hidden = true;
@@ -1692,10 +1698,11 @@ async function showPoll(store, id) {
     }
   });
 
-  app.querySelectorAll('.tabs [data-tab]').forEach((t) => t.addEventListener('click', () => {
-    board.dataset.tab = t.dataset.tab;
-    app.querySelectorAll('.tabs [data-tab]').forEach((x) => x.setAttribute('aria-selected', x === t));
-  }));
+  function switchTab(name) {
+    board.dataset.tab = name;
+    app.querySelectorAll('.tabs [data-tab]').forEach((x) => x.setAttribute('aria-selected', x.dataset.tab === name));
+  }
+  app.querySelectorAll('.tabs [data-tab]').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 
   /* ---- live refresh ---- */
   async function refresh() {
