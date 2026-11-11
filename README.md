@@ -76,7 +76,7 @@ To run it on your computer, serve the folder with any local web server, for exam
 
 ## Things to know
 
-- **No passwords:** like When2meet, anyone with a poll link can see everyone's names and change any answer. Fine for a friendly group, not for anything sensitive.
+- **Answers are open:** like When2meet, anyone with a poll link can see everyone's names and change any answer. Only editing or deleting the poll itself is protected. Fine for a friendly group, not for anything sensitive.
 - **Updates:** the group grid refreshes every 5 seconds while the page is open.
 - **Supabase free plan:** projects are paused after about a week with no activity. If the site stops loading responses, open your Supabase dashboard and restore the project. Your data is kept.
 - **Limits:** a poll can have up to 2,000 time slots (for example, 6 weeks of 9:00 to 21:00 in 15-minute slots is too many, but in 30-minute slots it fits).
