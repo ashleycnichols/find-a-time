@@ -9,7 +9,7 @@ It's a static site: plain HTML, CSS and JavaScript, with no build step. Answers 
 ## How it works
 
 - **Create a poll:** pick the days, the hours, the slot length and the time zone those hours are in. You get a link to share.
-- **Answer a poll:** type your name, then drag across the grid to mark when you're free. Changes save automatically. Typing the same name later lets you edit your times.
+- **Answer a poll:** type your name, then mark each day separately by dragging up or down that day's column, or tapping single slots. Changes save automatically. Typing the same name later lets you edit your times.
 - **Group view:** the darker a time, the more people can make it. Point at or tap a time to see who's free and who isn't.
 - **Best times:** a ranked list of the time blocks the most people can make. Point at one to highlight it on the grid.
 - **Time zones:** every slot is stored as an exact moment in UTC. Each person's grid is laid out in their own zone, so 18:00 in Dublin shows as 13:00 in New York. If the shift crosses midnight, the grid adds the extra day.

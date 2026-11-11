@@ -611,7 +611,7 @@ async function showPoll(store, id) {
       <span>Marking as <strong>${esc(S.me.name)}</strong></span>
       <button type="button" class="link-btn" data-act="change-name">Not you?</button>`;
     mineBody.innerHTML = `
-      <p class="hint">Drag across the grid to mark when you're free. Drag over marked times to clear them.</p>
+      <p class="hint">Mark each day separately: drag up or down a day to highlight the times you're free, or tap a single slot. Drag over highlighted times to clear them.</p>
       <div class="grid-wrap"><div class="grid mine-grid"></div></div>
       <div class="mine-foot">
         <span class="save-status" aria-live="polite"></span>
@@ -656,9 +656,10 @@ async function showPoll(store, id) {
       const el = document.elementFromPoint(e.clientX, e.clientY);
       const cell = el && el.closest && el.closest('.cell[data-r]');
       if (!cell || !grid.contains(cell)) return;
-      const r = +cell.dataset.r, c = +cell.dataset.c;
-      if (r === drag.r1 && c === drag.c1) return;
-      drag.r1 = r; drag.c1 = c;
+      // Each drag stays in the day it started on: only the time moves.
+      const r = +cell.dataset.r;
+      if (r === drag.r1) return;
+      drag.r1 = r;
       paintMine(rect());
     });
     const finish = () => {
