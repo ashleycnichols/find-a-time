@@ -943,16 +943,13 @@ async function showPoll(store, id) {
   pick.addEventListener('click', (e) => { if (e.target === pick) pick.close(); }); // click outside the card
   let picked = null;
 
-  // How long the same people stay free from `start`, capped at 4 hours.
-  function runLength(start) {
-    const P = people();
-    const sig = (ms) => P.filter((p) => p.set.has(ms)).map((p) => p.id).join('|');
-    const first = sig(start);
-    const len = S.step * 60000;
-    let end = start + len;
-    if (!first) return end; // nobody free here: just this one slot
-    while (end - start < 240 * 60000 && S.L.pos.has(end) && sig(end) === first) end += len;
-    return end;
+  const MIN = 60000;
+  // The span of the poll on the day (column) a time belongs to, so Start can move anywhere in it.
+  function dayWindow(ms) {
+    const col = (S.L.pos.get(ms) || {}).c;
+    const day = S.slots.filter((x) => (S.L.pos.get(x) || {}).c === col);
+    if (!day.length) return { from: ms, to: ms + S.step * MIN };
+    return { from: day[0], to: day[day.length - 1] + S.step * MIN };
   }
 
   function personRange(start, end, tz) {
@@ -966,7 +963,7 @@ async function showPoll(store, id) {
 
   function pickData() {
     const { start, end } = picked;
-    const inRange = S.slots.filter((ms) => ms >= start && ms < end);
+    const inRange = S.slots.filter((ms) => ms < end && ms + S.step * MIN > start); // any slot the event touches
     const P = people();
     const rows = P.map((p) => {
       const n = inRange.filter((ms) => p.set.has(ms)).length;
@@ -993,10 +990,21 @@ async function showPoll(store, id) {
 
   function renderPick() {
     const d = pickData();
-    const lenMin = (picked.end - picked.start) / 60000;
-    const lens = [];
-    for (let m = S.step; m <= Math.max(240, lenMin); m += S.step) lens.push(m);
-    const lenLabel = (m) => (m < 60 ? `${m} minutes` : `${m / 60} hour${m === 60 ? '' : 's'}`.replace('.5 hours', '½ hours'));
+    const lenMin = Math.round((picked.end - picked.start) / MIN);
+    const lens = [...new Set([15, 30, 45, 60, 90, 120, 150, 180, 240, 300, 360, 480, lenMin])].sort((a, b) => a - b);
+    const lenLabel = (m) => (m < 60 ? `${m} minutes` : m % 60 === 0 ? `${m / 60} hour${m === 60 ? '' : 's'}` : `${Math.floor(m / 60)} h ${m % 60} min`);
+    const w = picked.window;
+    const firstDay = keyOf(partsIn(w.from, S.tz));
+    const starts = [];
+    for (let t = w.from; t < w.to; t += 15 * MIN) starts.push(t);
+    if (!starts.includes(picked.start)) { starts.push(picked.start); starts.sort((a, b) => a - b); }
+    const startLabel = (t) => {
+      const p = partsIn(t, S.tz);
+      return `${fmtTime(p.h * 60 + p.min)}${keyOf(p) !== firstDay ? ' (next day)' : ''}`;
+    };
+    const blockNote = picked.block && picked.block.end - picked.block.start > 60 * MIN
+      ? (() => { const r = personRange(picked.block.start, picked.block.end, S.tz); return ` Best stretch: ${r.time}.`; })()
+      : '';
     const statusText = { free: 'Free', part: 'Free for part', busy: 'Not free' };
     pick.innerHTML = `
       <div class="pick-card">
@@ -1005,7 +1013,7 @@ async function showPoll(store, id) {
           <div>
             <p class="pick-poll">${esc(poll.title)}</p>
             <h2 id="pick-title">${esc(d.mine.day)}, ${esc(d.mine.time)}</h2>
-            <p class="pick-sub">${esc(cityOf(S.tz))} time (${esc(gmtLabel(S.tz, picked.start))}). ${d.total ? `${d.free} of ${d.total} free for the whole time.` : 'Nobody has answered yet.'}</p>
+            <p class="pick-sub">${esc(cityOf(S.tz))} time (${esc(gmtLabel(S.tz, picked.start))}). ${d.total ? `${d.free} of ${d.total} free for the whole time.` : 'Nobody has answered yet.'}${esc(blockNote)}</p>
           </div>
         </div>
         ${d.total ? `
@@ -1026,18 +1034,26 @@ async function showPoll(store, id) {
         </table>` : ''}
       </div>
       <div class="pick-actions">
-        <label class="pick-len">Length
-          <select>${lens.map((m) => `<option value="${m}"${m === lenMin ? ' selected' : ''}>${lenLabel(m)}</option>`).join('')}</select>
-        </label>
+        <span class="pick-controls">
+          <label class="pick-len">Start
+            <select name="start">${starts.map((t) => `<option value="${t}"${t === picked.start ? ' selected' : ''}>${esc(startLabel(t))}</option>`).join('')}</select>
+          </label>
+          <label class="pick-len">Length
+            <select name="len">${lens.map((m) => `<option value="${m}"${m === lenMin ? ' selected' : ''}>${lenLabel(m)}</option>`).join('')}</select>
+          </label>
+        </span>
         <span class="pick-btns">
           <button type="button" class="btn primary" data-pick="copy">Copy as text</button>
           <button type="button" class="btn" data-pick="close">Close</button>
         </span>
       </div>`;
-    pick.querySelector('select').addEventListener('change', (e) => {
-      picked.end = picked.start + +e.target.value * 60000;
+    pick.querySelectorAll('.pick-actions select').forEach((sel) => sel.addEventListener('change', () => {
+      const len = +pick.querySelector('select[name=len]').value * MIN;
+      picked.start = +pick.querySelector('select[name=start]').value;
+      picked.end = picked.start + len;
       renderPick();
-    });
+      pick.querySelector(`select[name=${sel.name}]`).focus(); // keep keyboard place after redrawing
+    }));
   }
 
   function pickText() {
@@ -1067,9 +1083,12 @@ async function showPoll(store, id) {
     }
   });
 
-  function openPick(start, end) {
+  // Opens on 1 hour from the chosen time. From a best-times block, it starts at the block and
+  // remembers the block so you can slide the hour around inside it.
+  function openPick(start, blockEnd) {
     hideTip();
-    picked = { start, end: end || runLength(start) };
+    const len = Math.min(60 * MIN, blockEnd ? blockEnd - start : 60 * MIN);
+    picked = { start, end: start + len, window: dayWindow(start), block: blockEnd ? { start, end: blockEnd } : null };
     renderPick();
     if (!pick.open) pick.showModal();
   }

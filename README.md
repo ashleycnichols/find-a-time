@@ -15,7 +15,7 @@ It's a static site: plain HTML, CSS and JavaScript, with no build step. Answers 
 - **Only hours someone can make:** a tick box on the group grid hides hours nobody has marked.
 - **Days apart:** when the chosen days aren't next to each other (say, three weekends), a dotted break separates them in the grid.
 - **Best times:** a ranked list of the time blocks the most people can make. Point at one to highlight it on the grid.
-- **Share a time:** double-click a time in the group grid (or tap it twice on a phone), or click one of the best times. A card shows that time in each person's own time zone and whether they can make it. Change the length, then **Copy as text** to paste into a chat, or take a screenshot.
+- **Share a time:** double-click a time in the group grid (or tap it twice on a phone), or click one of the best times. A card shows that time in each person's own time zone and whether they can make it. Use **Start** (in 15-minute steps) and **Length** to set the exact event, then **Copy as text** to paste into a chat, or take a screenshot.
 - **Finding your time zone:** type a city, country, abbreviation or offset ("Kraków", "Boston", "Ireland", "EST", "GMT+1") and pick from the matches, which show each zone's current time. If you've switched away from your own zone, a link switches you back.
 - **Time zones:** every slot is stored as an exact moment in UTC. Each person's grid is laid out in their own zone, so 18:00 in Dublin shows as 13:00 in New York. If the shift crosses midnight, the grid adds the extra day.
 
