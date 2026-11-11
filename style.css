@@ -6,13 +6,13 @@
   --muted: #5A6476;
   --line: #CDD4DE;
   --line-soft: #E3E8EE;
-  --accent: #14594F;
-  --accent-hover: #0E463E;
+  --accent: #1F5C3A;
+  --accent-hover: #17482D;
   --on-accent: #FFFFFF;
-  --mine: #F2B53A;
-  --mine-edge: #C98B12;
-  --heat-lo: #F4F7F7;
-  --heat-hi: #0F5A4E;
+  --mine: #B8853F;
+  --mine-edge: #8E6229;
+  --heat-lo: #F4F7F4;
+  --heat-hi: #1F5C3A;
   --danger: #A3342B;
   --focus: #2F6BD8;
   --detail-bg: #172031;
@@ -37,13 +37,13 @@
     --muted: #9AA5B6;
     --line: #313C4D;
     --line-soft: #242E3C;
-    --accent: #5BC0AE;
-    --accent-hover: #74D0BF;
-    --on-accent: #062520;
-    --mine: #F2B53A;
-    --mine-edge: #F7CD72;
+    --accent: #67C08C;
+    --accent-hover: #80CFA1;
+    --on-accent: #07210F;
+    --mine: #C9954F;
+    --mine-edge: #E2B675;
     --heat-lo: #1C2431;
-    --heat-hi: #63D6C1;
+    --heat-hi: #6CCB93;
     --danger: #F08A80;
     --focus: #86B2FF;
     --detail-bg: #24324A;
@@ -74,7 +74,7 @@ button, input, select { font: inherit; color: inherit; }
 
 .demo-banner {
   background: var(--mine);
-  color: #2C1F02;
+  color: #1A1203;
   padding: 10px 16px;
   font-size: .9rem;
   text-align: center;
