@@ -95,7 +95,9 @@ function makeSupabaseStore({ url, key }) {
     if (!res.ok) {
       let msg = `${res.status}`;
       try { const j = await res.json(); msg = j.message || j.hint || msg; } catch { /* no body */ }
-      throw new Error(msg);
+      const err = new Error(msg);
+      err.status = res.status;
+      throw err;
     }
     if (res.status === 204) return null;
     const text = await res.text();
@@ -104,14 +106,27 @@ function makeSupabaseStore({ url, key }) {
   const q = encodeURIComponent;
   const fromRow = (r) => ({ id: r.id, name: r.name, tz: r.tz, slots: (r.slots || []).map(Number), updatedAt: r.updated_at });
 
+  const pollArgs = (p) => ({ p_title: p.title, p_tz: p.tz, p_dates: p.dates, p_start: p.startMin, p_end: p.endMin, p_step: p.step, p_slots: p.slots });
+  const rpc = (fn, body) => call(`/rpc/${fn}`, { method: 'POST', body: JSON.stringify(body) });
+  const missingSetup = (err) => err.status === 404 || /function|schema cache/i.test(err.message);
+
   return {
     mode: 'supabase',
-    async createPoll(id, p) {
-      await call('/polls', {
-        method: 'POST',
-        headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ id, title: p.title, tz: p.tz, dates: p.dates, start_min: p.startMin, end_min: p.endMin, step: p.step, slots: p.slots }),
-      });
+    async createPoll(id, p, key) {
+      try {
+        await rpc('create_poll', { p_id: id, ...pollArgs(p), p_key: key });
+      } catch (err) {
+        if (missingSetup(err)) throw new Error('the database needs updating. Run supabase-setup.sql again in Supabase');
+        throw err;
+      }
+    },
+    async updatePoll(id, p, key) { await rpc('update_poll', { p_id: id, ...pollArgs(p), p_key: key }); },
+    async deletePoll(id, key) { await rpc('delete_poll', { p_id: id, p_key: key }); },
+    async checkKey(id, key) {
+      try { return (await rpc('can_manage_poll', { p_id: id, p_key: key })) === true; } catch (err) {
+        if (missingSetup(err)) throw new Error('the database needs updating. Run supabase-setup.sql again in Supabase');
+        throw err;
+      }
     },
     async getPoll(id) {
       const rows = await call(`/polls?id=eq.${q(id)}&select=*`);
@@ -141,6 +156,19 @@ function makeLocalStore() {
   return {
     mode: 'local',
     async createPoll(id, p) { const all = ls.get('findatime:polls', {}); all[id] = p; ls.set('findatime:polls', all); },
+    async updatePoll(id, p) {
+      const all = ls.get('findatime:polls', {});
+      if (!all[id]) throw new Error('this poll no longer exists');
+      all[id] = { ...all[id], ...p };
+      ls.set('findatime:polls', all);
+    },
+    async deletePoll(id) {
+      const all = ls.get('findatime:polls', {});
+      delete all[id];
+      ls.set('findatime:polls', all);
+      ls.del(rkey(id));
+    },
+    async checkKey() { return true; }, // demo mode: everything is on this device anyway
     async getPoll(id) { return ls.get('findatime:polls', {})[id] || null; },
     async listResponses(id) { return Object.values(ls.get(rkey(id), {})); },
     async saveResponse(id, rid, d) { const all = ls.get(rkey(id), {}); all[rid] = { id: rid, ...d, updatedAt: Date.now() }; ls.set(rkey(id), all); },
@@ -202,7 +230,10 @@ function buildLayout(slots, tz, step) {
     ms[r][c] = s.ms;
     pos.set(s.ms, { r, c });
   }
-  return { cols, rows, ms, pos, step, dayStart };
+  // Mark columns that don't follow straight on from the day before.
+  const dayNum = (k) => { const [y, m, d] = k.split('-').map(Number); return Date.UTC(y, m - 1, d) / 86400000; };
+  const gapBefore = cols.map((k, i) => i > 0 && dayNum(k) - dayNum(cols[i - 1]) > 1);
+  return { cols, rows, ms, pos, step, dayStart, gapBefore };
 }
 
 function bestTimes(slots, people, step) {
@@ -245,6 +276,17 @@ function newId() {
   const bytes = crypto.getRandomValues(new Uint8Array(10));
   return [...bytes].map((b) => chars[b % chars.length]).join('');
 }
+function newKey() {
+  return [...crypto.getRandomValues(new Uint8Array(18))].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+// The creator's manage key for a poll, or the site admin password, if this browser has one.
+const pollKey = (id) => ls.get('findatime:key:' + id, null);
+const manageKey = (id) => pollKey(id) || ls.get('findatime:admin', null);
+function forgetPoll(id) {
+  ls.del('findatime:key:' + id);
+  ls.del('findatime:me:' + id);
+  ls.set('findatime:recent', ls.get('findatime:recent', []).filter((r) => r.id !== id));
+}
 const nameKey = (name) => 'p_' + name.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[\/\\?#&%]/g, '-').slice(0, 60);
 function addRecent(id, title) {
   const list = ls.get('findatime:recent', []).filter((r) => r.id !== id);
@@ -273,46 +315,62 @@ function moveFocus(els, r, c, dr, dc) {
 /* Create a poll                                                       */
 /* ------------------------------------------------------------------ */
 
-function showCreate(store) {
-  const tz = detectTz();
+// `edit` is { id, poll, key } when editing an existing poll.
+function showCreate(store, edit = null) {
+  const poll = edit && edit.poll;
+  const tz = poll ? poll.tz : detectTz();
   const now = partsIn(Date.now(), tz);
   const todayKey = keyOf(now);
-  const selected = new Set();
-  let month = { y: now.y, m: now.m };
+  const selected = new Set(poll ? poll.dates : []);
+  const firstSel = [...selected].sort()[0];
+  const minMonth = firstSel && firstSel < todayKey
+    ? { y: +firstSel.slice(0, 4), m: +firstSel.slice(5, 7) }
+    : { y: now.y, m: now.m };
+  let month = firstSel ? { y: +firstSel.slice(0, 4), m: +firstSel.slice(5, 7) } : { y: now.y, m: now.m };
+  if (month.y * 12 + month.m < minMonth.y * 12 + minMonth.m) month = { ...minMonth };
+
+  const startSel = poll ? poll.startMin : 540;
+  const endSel = poll ? (poll.endMin > 1440 ? poll.endMin - 1440 : poll.endMin) : 1260;
+  const stepSel = poll ? poll.step : 30;
 
   const hourOpts = (from, to, sel) => {
     let h = '';
     for (let t = from; t <= to; t += 30) h += `<option value="${t}"${t === sel ? ' selected' : ''}>${t === 1440 ? 'Midnight' : fmtTime(t)}</option>`;
     return h;
   };
-  const recent = ls.get('findatime:recent', []);
+  const stepOpts = [[15, '15 minutes'], [30, '30 minutes'], [60, '1 hour']]
+    .map(([v, l]) => `<option value="${v}"${v === stepSel ? ' selected' : ''}>${l}</option>`).join('');
+  const recent = edit ? [] : ls.get('findatime:recent', []);
 
   app.innerHTML = `
     <section class="create">
       <div class="create-intro">
-        <h1>Find a time that works for everyone</h1>
-        <p class="lede">Pick the days and hours you're considering. Everyone marks when they're free, and each person sees the times in their own time zone.</p>
+        ${edit
+          ? `<h1>Edit poll</h1>
+             <p class="lede">Changes show up for everyone straight away. People's answers are kept for any times still in the poll.</p>
+             <p><a href="?poll=${esc(edit.id)}">Back to the poll</a></p>`
+          : `<h1>Find a time that works for everyone</h1>
+             <p class="lede">Pick the days and hours you're considering. Everyone marks when they're free, and each person sees the times in their own time zone.</p>`}
       </div>
       <form class="card create-form" novalidate>
         <label class="field">
           <span>What's it for?</span>
-          <input name="title" maxlength="100" placeholder="Session planning" autocomplete="off" required>
+          <input name="title" maxlength="100" placeholder="Session planning" autocomplete="off" required value="${poll ? esc(poll.title) : ''}">
         </label>
 
         <fieldset class="field">
           <legend>Which days?</legend>
           <div class="cal" aria-label="Choose dates"></div>
-          <p class="hint"><span class="date-count">No days picked yet.</span> Click or drag across days to pick them.</p>
+          <p class="hint"><span class="date-count"></span> Click or drag across days to pick them. They don't need to be next to each other.</p>
         </fieldset>
 
         <div class="field-row">
-          <label class="field"><span>From</span><select name="start">${hourOpts(0, 1410, 540)}</select></label>
-          <label class="field"><span>Until</span><select name="end">${hourOpts(30, 1440, 1260)}</select></label>
-          <label class="field"><span>Slots of</span>
-            <select name="step"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option></select>
-          </label>
+          <label class="field"><span>From</span><select name="start">${hourOpts(0, 1410, startSel)}</select></label>
+          <label class="field"><span>Until</span><select name="end">${hourOpts(30, 1440, endSel)}</select></label>
+          <label class="field"><span>Slots of</span><select name="step">${stepOpts}</select></label>
         </div>
         <p class="hint overnight" hidden>The end time is before the start, so each day runs past midnight.</p>
+        <p class="hint step-warning" hidden>Changing the slot length means people who already answered will need to mark their times again.</p>
 
         <label class="field">
           <span>Those hours are in</span>
@@ -320,12 +378,29 @@ function showCreate(store) {
         </label>
 
         <p class="form-error" role="alert" hidden></p>
-        <button class="btn primary" type="submit">Create poll</button>
+        <button class="btn primary" type="submit">${edit ? 'Save changes' : 'Create poll'}</button>
+
+        ${edit ? `
+          <div class="manage-extra">
+            ${pollKey(edit.id) ? `
+              <div>
+                <button type="button" class="link-btn" data-act="copy-manage">Copy manage link</button>
+                <p class="hint">Anyone with the manage link can edit or delete this poll. Use it to manage the poll from another device.</p>
+              </div>` : ''}
+            <div>
+              <button type="button" class="link-btn danger" data-act="delete">Delete this poll</button>
+              <p class="hint">Deletes the poll and everyone's answers. This can't be undone.</p>
+            </div>
+          </div>` : ''}
       </form>
       ${recent.length ? `
         <aside class="recent">
           <h2>Your recent polls</h2>
-          <ul>${recent.map((r) => `<li><a href="?poll=${esc(r.id)}">${esc(r.title)}</a></li>`).join('')}</ul>
+          <ul>${recent.map((r) => `
+            <li>
+              <a href="?poll=${esc(r.id)}">${esc(r.title)}</a>
+              ${manageKey(r.id) ? `<a class="recent-edit" href="?poll=${esc(r.id)}&amp;edit=1">Edit</a>` : ''}
+            </li>`).join('')}</ul>
         </aside>` : ''}
     </section>`;
 
@@ -334,6 +409,7 @@ function showCreate(store) {
   const countEl = app.querySelector('.date-count');
   const errEl = app.querySelector('.form-error');
   const overnightEl = app.querySelector('.overnight');
+  const stepWarn = app.querySelector('.step-warning');
 
   const updateCount = () => {
     countEl.textContent = selected.size ? `${selected.size} day${selected.size === 1 ? '' : 's'} picked.` : 'No days picked yet.';
@@ -341,21 +417,24 @@ function showCreate(store) {
   const updateOvernight = () => { overnightEl.hidden = +form.end.value > +form.start.value; };
   form.start.addEventListener('change', updateOvernight);
   form.end.addEventListener('change', updateOvernight);
+  form.step.addEventListener('change', () => { stepWarn.hidden = !edit || +form.step.value === poll.step; });
+  updateCount();
+  updateOvernight();
 
   function renderCal() {
     const { y, m } = month;
     const first = new Date(Date.UTC(y, m - 1, 1));
     const lead = (first.getUTCDay() + 6) % 7;
     const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
-    const atStart = y === now.y && m === now.m;
+    const atStart = y * 12 + m <= minMonth.y * 12 + minMonth.m;
     const wk = [];
     for (let i = 0; i < 7; i++) wk.push(fmtDay(`2024-01-${pad(1 + i)}`, { weekday: 'short' })); // 1 Jan 2024 was a Monday
     let cells = '';
     for (let i = 0; i < lead; i++) cells += '<span></span>';
     for (let d = 1; d <= days; d++) {
       const k = `${y}-${pad(m)}-${pad(d)}`;
-      const past = k < todayKey;
-      cells += `<button type="button" class="day${selected.has(k) ? ' on' : ''}${k === todayKey ? ' today' : ''}" data-key="${k}" ${past ? 'disabled' : ''} aria-pressed="${selected.has(k)}">${d}</button>`;
+      const off = k < todayKey && !selected.has(k);
+      cells += `<button type="button" class="day${selected.has(k) ? ' on' : ''}${k === todayKey ? ' today' : ''}" data-key="${k}" ${off ? 'disabled' : ''} aria-pressed="${selected.has(k)}">${d}</button>`;
     }
     cal.innerHTML = `
       <div class="cal-head">
@@ -377,9 +456,10 @@ function showCreate(store) {
   cal.addEventListener('click', (e) => {
     const nav = e.target.closest('[data-nav]');
     if (nav) {
-      const n = +nav.dataset.nav;
       let { y, m } = month;
-      m += n; if (m < 1) { m = 12; y--; } if (m > 12) { m = 1; y++; }
+      m += +nav.dataset.nav;
+      if (m < 1) { m = 12; y--; }
+      if (m > 12) { m = 1; y++; }
       month = { y, m };
       renderCal();
       return;
@@ -407,9 +487,44 @@ function showCreate(store) {
 
   renderCal();
 
+  const fail = (msg) => { errEl.textContent = msg; errEl.hidden = false; };
+
+  if (edit) {
+    let armed = false;
+    app.addEventListener('click', async (e) => {
+      const act = e.target.closest('[data-act]');
+      if (!act) return;
+      if (act.dataset.act === 'copy-manage') {
+        const url = new URL(location.href);
+        url.search = `?poll=${edit.id}&key=${pollKey(edit.id)}`;
+        try { await navigator.clipboard.writeText(url.href); act.textContent = 'Manage link copied'; } catch { window.prompt('Copy your manage link:', url.href); }
+        setTimeout(() => { act.textContent = 'Copy manage link'; }, 2000);
+      }
+      if (act.dataset.act === 'delete') {
+        if (!armed) {
+          armed = true;
+          act.textContent = 'Click again to delete the poll and all answers';
+          setTimeout(() => { armed = false; if (act.isConnected) act.textContent = 'Delete this poll'; }, 5000);
+          return;
+        }
+        act.disabled = true;
+        act.textContent = 'Deleting…';
+        try {
+          await store.deletePoll(edit.id, edit.key);
+          forgetPoll(edit.id);
+          location.href = './';
+        } catch (err) {
+          console.error(err);
+          act.disabled = false;
+          act.textContent = 'Delete this poll';
+          fail(`The poll wasn't deleted: ${err.message}.`);
+        }
+      }
+    });
+  }
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const fail = (msg) => { errEl.textContent = msg; errEl.hidden = false; };
     errEl.hidden = true;
     const title = form.title.value.trim();
     if (!title) { form.title.focus(); return fail('Give the poll a name so people know what it is.'); }
@@ -423,18 +538,52 @@ function showCreate(store) {
     const slots = buildSlots(dates, start, end, step, zone);
     if (slots.length > MAX_SLOTS) return fail(`That's ${slots.length.toLocaleString()} time slots, and the limit is ${MAX_SLOTS.toLocaleString()}. Pick fewer days, a shorter time range or longer slots.`);
     const btn = form.querySelector('button[type=submit]');
-    btn.disabled = true; btn.textContent = 'Creating poll…';
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = edit ? 'Saving…' : 'Creating poll…';
+    const data = { title, tz: zone, dates, startMin: start, endMin: end, step, slots };
     try {
-      const id = newId();
-      await store.createPoll(id, { title, tz: zone, dates, startMin: start, endMin: end, step, slots, createdAt: Date.now() });
-      addRecent(id, title);
-      location.href = `?poll=${id}`;
+      if (edit) {
+        await store.updatePoll(edit.id, data, edit.key);
+        addRecent(edit.id, title);
+        location.href = `?poll=${edit.id}`;
+      } else {
+        const id = newId();
+        const key = newKey();
+        await store.createPoll(id, { ...data, createdAt: Date.now() }, key);
+        ls.set('findatime:key:' + id, key);
+        addRecent(id, title);
+        location.href = `?poll=${id}`;
+      }
     } catch (err) {
       console.error(err);
-      btn.disabled = false; btn.textContent = 'Create poll';
-      fail(`The poll wasn't created: ${err.message}. Check the Supabase settings in config.js and try again.`);
+      btn.disabled = false;
+      btn.textContent = label;
+      fail(`${edit ? "The changes weren't saved" : "The poll wasn't created"}: ${err.message}.`);
     }
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Edit a poll: check this browser can manage it first                 */
+/* ------------------------------------------------------------------ */
+
+async function showEdit(store, id) {
+  app.innerHTML = '<p class="loading">Loading poll…</p>';
+  let poll;
+  try { poll = await store.getPoll(id); } catch (err) {
+    app.innerHTML = messageView("This poll didn't load", `The database said: ${esc(err.message)}. Check your connection and reload the page.`);
+    return;
+  }
+  if (!poll) {
+    forgetPoll(id);
+    app.innerHTML = messageView('There is no poll at this link', 'It may have been deleted. <a href="./">Create a new poll</a>.');
+    return;
+  }
+  const key = manageKey(id);
+  if (!key) { location.href = `?poll=${id}`; return; }
+  document.title = `Edit ${poll.title} | ${SITE}`;
+  showCreate(store, { id, poll, key });
 }
 
 /* ------------------------------------------------------------------ */
@@ -450,7 +599,8 @@ async function showPoll(store, id) {
     return;
   }
   if (!poll) {
-    app.innerHTML = messageView('There is no poll at this link', 'Check the link you were sent, or <a href="./">create a new poll</a>.');
+    forgetPoll(id);
+    app.innerHTML = messageView('There is no poll at this link', 'It may have been deleted. Check the link you were sent, or <a href="./">create a new poll</a>.');
     return;
   }
   addRecent(id, poll.title);
@@ -476,8 +626,23 @@ async function showPoll(store, id) {
     <section class="poll">
       <div class="poll-head">
         <h1 class="poll-title">${esc(poll.title)}</h1>
-        <button class="btn" type="button" data-act="copy">Copy link</button>
+        <div class="head-actions">
+          <button class="btn" type="button" data-act="copy">Copy link</button>
+          <button class="btn" type="button" data-act="edit">Edit poll</button>
+        </div>
       </div>
+      <form class="unlock card" hidden>
+        <label class="field">
+          <span>Enter the admin password to edit this poll</span>
+          <input type="password" name="pw" autocomplete="current-password">
+        </label>
+        <div class="unlock-actions">
+          <button class="btn primary" type="submit">Unlock</button>
+          <button class="link-btn" type="button" data-act="unlock-cancel">Cancel</button>
+        </div>
+        <p class="hint">If you created this poll on another device, open the manage link you copied there instead.</p>
+        <p class="form-error" role="alert" hidden></p>
+      </form>
       <div class="tzline">
         <label for="tz-select">Showing times in</label>
         <select id="tz-select">${zoneOptions(S.tz)}</select>
@@ -507,7 +672,6 @@ async function showPoll(store, id) {
         </section>
 
         <aside class="side">
-          <div class="detail" aria-live="polite"></div>
           <div class="side-block">
             <h2>Best times</h2>
             <ol class="best"></ol>
@@ -526,7 +690,11 @@ async function showPoll(store, id) {
   const mineBody = $('.mine-body');
   const meLine = $('.me-line');
   const groupGrid = $('.group-grid');
-  const detail = $('.detail');
+  const tip = document.createElement('div');
+  tip.className = 'tip';
+  tip.hidden = true;
+  tip.setAttribute('role', 'status');
+  document.body.appendChild(tip);
 
   /* ---- people, counts ---- */
   function people() {
@@ -545,7 +713,8 @@ async function showPoll(store, id) {
     const L = S.L;
     const rows = L.rows;
     let h = '<div class="corner"></div>';
-    for (const c of L.cols) {
+    for (const [i, c] of L.cols.entries()) {
+      if (L.gapBefore[i]) h += '<div class="day-gap head" aria-hidden="true"></div>';
       h += `<div class="colhead"><span class="dow">${esc(fmtDay(c, { weekday: 'short' }))}</span><span class="dom">${esc(fmtDay(c, { day: 'numeric', month: 'short' }))}</span></div>`;
     }
     let anchor = rows[0];
@@ -560,6 +729,7 @@ async function showPoll(store, id) {
       const hourEnd = (off + S.step - anchor) % 60 === 0;
       h += `<div class="tl${nextDay && label ? ' next' : ''}"${nextDay && label ? ' title="Next day"' : ''}>${esc(label)}</div>`;
       L.cols.forEach((col, c) => {
+        if (L.gapBefore[c]) h += '<div class="day-gap" aria-hidden="true"></div>';
         if (L.ms[r][c] == null) { h += '<div class="cell off" aria-hidden="true"></div>'; return; }
         const realDay = nextDay ? keyOf(partsIn(L.ms[r][c], S.tz)) : col;
         const aria = `${fmtDay(realDay, { weekday: 'long', day: 'numeric', month: 'long' })}, ${fmtTime(tod)}`;
@@ -576,7 +746,12 @@ async function showPoll(store, id) {
     return els;
   }
   function setGridColumns(grid) {
-    grid.style.gridTemplateColumns = `var(--tl-w) repeat(${S.L.cols.length}, minmax(var(--cell-min), 1fr))`;
+    const tracks = ['var(--tl-w)'];
+    S.L.cols.forEach((c, i) => {
+      if (S.L.gapBefore[i]) tracks.push('var(--day-gap)');
+      tracks.push('minmax(var(--cell-min), 1fr)');
+    });
+    grid.style.gridTemplateColumns = tracks.join(' ');
   }
 
   /* ---- your availability ---- */
@@ -765,46 +940,70 @@ async function showPoll(store, id) {
   }
 
   function wireGroupGrid() {
-    groupGrid.addEventListener('pointerover', (e) => {
+    const msOf = (cell) => S.L.ms[+cell.dataset.r][+cell.dataset.c];
+    groupGrid.addEventListener('pointermove', (e) => {
+      if (e.pointerType !== 'mouse') return;
       const cell = e.target.closest('.cell[data-r]');
-      if (cell) { S.hover = S.L.ms[+cell.dataset.r][+cell.dataset.c]; renderDetail(); }
+      if (!cell) { hideTip(); return; }
+      showTip(msOf(cell), { x: e.clientX, y: e.clientY });
     });
-    groupGrid.addEventListener('pointerleave', () => { S.hover = null; renderDetail(); });
+    groupGrid.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') hideTip(); });
+    groupGrid.addEventListener('click', (e) => {
+      const cell = e.target.closest('.cell[data-r]');
+      if (!cell) return;
+      if (S.hover === msOf(cell) && !tip.hidden && e.detail !== 0) { hideTip(); return; }
+      showTip(msOf(cell), { el: cell });
+    });
     groupGrid.addEventListener('focusin', (e) => {
       const cell = e.target.closest('.cell[data-r]');
-      if (cell) { S.hover = S.L.ms[+cell.dataset.r][+cell.dataset.c]; renderDetail(); }
+      if (cell && cell.matches(':focus-visible')) showTip(msOf(cell), { el: cell });
     });
-    groupGrid.addEventListener('keydown', (e) => gridKeys(e, S.groupEls));
+    groupGrid.addEventListener('focusout', () => hideTip());
+    groupGrid.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); else gridKeys(e, S.groupEls); });
+    document.addEventListener('pointerdown', (e) => { if (!groupGrid.contains(e.target)) hideTip(); });
+    window.addEventListener('scroll', () => { if (S.tipAt && S.tipAt.el) hideTip(); }, { passive: true });
   }
 
-  function renderDetail() {
+  function tipHtml() {
     const P = people();
     const N = P.length;
-    if (S.hover == null) {
-      detail.innerHTML = N
-        ? '<p class="detail-empty">Point at or tap a time in the group grid to see who can make it.</p>'
-        : '<p class="detail-empty">Nobody has added their times yet. Copy the link and send it to your group.</p>';
-      return;
-    }
     const lbl = rangeLabel(S.hover, S.hover + S.step * 60000, S.tz);
     const yes = P.filter((p) => p.set.has(S.hover));
     const no = P.filter((p) => !p.set.has(S.hover));
-    detail.innerHTML = `
-      <p class="detail-when"><span>${esc(lbl.day)}</span> <strong>${esc(lbl.time)}</strong></p>
-      <p class="detail-count">${yes.length} of ${N} can make it</p>
-      <div class="detail-cols">
-        <div><h3>Free</h3><ul>${yes.map((p) => `<li>${esc(p.name)}</li>`).join('') || '<li class="none">Nobody</li>'}</ul></div>
-        <div><h3>Not free</h3><ul>${no.map((p) => `<li>${esc(p.name)}</li>`).join('') || '<li class="none">Nobody</li>'}</ul></div>
-      </div>`;
+    const list = (arr) => arr.map((p) => `<li>${esc(p.name)}</li>`).join('') || '<li class="none">Nobody</li>';
+    return `
+      <p class="tip-when"><span>${esc(lbl.day)}</span> <strong>${esc(lbl.time)}</strong></p>
+      ${N ? `<p class="tip-count">${yes.length} of ${N} can make it</p>
+      <div class="tip-cols">
+        <div><h3>Free</h3><ul>${list(yes)}</ul></div>
+        <div><h3>Not free</h3><ul>${list(no)}</ul></div>
+      </div>` : '<p class="tip-count">Nobody has answered yet</p>'}`;
   }
+  function showTip(ms, at) {
+    S.hover = ms;
+    S.tipAt = at;
+    tip.innerHTML = tipHtml();
+    tip.hidden = false;
+    let x, y;
+    if (at.el) { const r = at.el.getBoundingClientRect(); x = r.right; y = r.top; }
+    else { x = at.x; y = at.y; }
+    const w = tip.offsetWidth, h = tip.offsetHeight, pad = 8, off = at.el ? 6 : 16;
+    let left = x + off, top = y + (at.el ? 0 : off);
+    if (left + w > innerWidth - pad) left = (at.el ? at.el.getBoundingClientRect().left : x) - w - off;
+    if (top + h > innerHeight - pad) top = innerHeight - h - pad;
+    tip.style.left = `${Math.max(pad, left)}px`;
+    tip.style.top = `${Math.max(pad, top)}px`;
+  }
+  function hideTip() { tip.hidden = true; S.hover = null; S.tipAt = null; }
+  function refreshTip() { if (!tip.hidden && S.hover != null) tip.innerHTML = tipHtml(); }
 
   function renderSide(P) {
-    renderDetail();
+    refreshTip();
     const N = P.length;
     const best = bestTimes(S.slots, P, S.step);
     const bestEl = $('.best');
     if (!N) {
-      bestEl.innerHTML = '<li class="best-empty">The best times show up here once people add their availability.</li>';
+      bestEl.innerHTML = '<li class="best-empty">Nobody has added their times yet. Copy the link and send it to your group, and the best times will show up here.</li>';
     } else {
       bestEl.innerHTML = best.map((b, i) => {
         const lbl = rangeLabel(b.start, b.end, S.tz);
@@ -868,6 +1067,13 @@ async function showPoll(store, id) {
       catch { window.prompt('Copy this link:', url); }
       setTimeout(() => { act.textContent = 'Copy link'; }, 2000);
     }
+    if (a === 'edit') {
+      if (manageKey(id)) { location.href = `?poll=${id}&edit=1`; return; }
+      const f = $('.unlock');
+      f.hidden = false;
+      f.pw.focus();
+    }
+    if (a === 'unlock-cancel') $('.unlock').hidden = true;
     if (a === 'change-name') {
       clearTimeout(saveTimer);
       S.me = null; S.mine = new Set(); S.mineLoaded = false;
@@ -895,6 +1101,27 @@ async function showPoll(store, id) {
     }
   });
 
+  $('.unlock').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.currentTarget;
+    const err = f.querySelector('.form-error');
+    const pw = f.pw.value;
+    if (!pw) return;
+    err.hidden = true;
+    try {
+      if (await store.checkKey(id, pw)) {
+        ls.set('findatime:admin', pw);
+        location.href = `?poll=${id}&edit=1`;
+      } else {
+        err.textContent = "That password doesn't work for this poll.";
+        err.hidden = false;
+      }
+    } catch (ex) {
+      err.textContent = `Couldn't check the password: ${ex.message}.`;
+      err.hidden = false;
+    }
+  });
+
   app.querySelectorAll('.tabs [data-tab]').forEach((t) => t.addEventListener('click', () => {
     board.dataset.tab = t.dataset.tab;
     app.querySelectorAll('.tabs [data-tab]').forEach((x) => x.setAttribute('aria-selected', x === t));
@@ -911,7 +1138,7 @@ async function showPoll(store, id) {
       renderGroup();
     } catch (err) {
       console.error(err);
-      detail.innerHTML = `<p class="detail-empty error">Couldn't load responses: ${esc(err.message)}</p>`;
+      $('.best').innerHTML = `<li class="best-empty error">Couldn't load answers: ${esc(err.message)}</li>`;
     }
   }
 
@@ -931,8 +1158,15 @@ async function main() {
   let store;
   if (sb.url && sb.key) store = makeSupabaseStore(sb);
   else { store = makeLocalStore(); document.getElementById('demo-banner').hidden = false; }
-  const id = new URLSearchParams(location.search).get('poll');
-  if (id) await showPoll(store, id.trim());
+  const params = new URLSearchParams(location.search);
+  const id = (params.get('poll') || '').trim();
+  if (id && params.get('key')) {
+    // Opened from a manage link: remember the key on this device, then tidy the address bar.
+    ls.set('findatime:key:' + id, params.get('key'));
+    history.replaceState(null, '', `?poll=${encodeURIComponent(id)}&edit=1`);
+    await showEdit(store, id);
+  } else if (id && params.get('edit')) await showEdit(store, id);
+  else if (id) await showPoll(store, id);
   else showCreate(store);
 }
 
