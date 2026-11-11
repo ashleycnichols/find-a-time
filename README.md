@@ -13,6 +13,7 @@ It's a static site: plain HTML, CSS and JavaScript, with no build step. Answers 
 - **Group view:** the darker a time, the more people can make it. Point at or tap a time to see a pop-up of who's free and who isn't.
 - **Days apart:** when the chosen days aren't next to each other (say, three weekends), a dotted break separates them in the grid.
 - **Best times:** a ranked list of the time blocks the most people can make. Point at one to highlight it on the grid.
+- **Finding your time zone:** type a city, country, abbreviation or offset ("Kraków", "Boston", "Ireland", "EST", "GMT+1") and pick from the matches, which show each zone's current time. If you've switched away from your own zone, a link switches you back.
 - **Time zones:** every slot is stored as an exact moment in UTC. Each person's grid is laid out in their own zone, so 18:00 in Dublin shows as 13:00 in New York. If the shift crosses midnight, the grid adds the extra day.
 
 ## Set up (about 10 minutes)

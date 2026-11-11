@@ -70,8 +70,231 @@ function allZones(extra) {
   for (const z of extra) if (z && isValidTz(z)) set.add(z);
   return [...set].sort();
 }
-function zoneOptions(selected) {
-  return allZones([selected, 'UTC']).map((z) => `<option value="${esc(z)}"${z === selected ? ' selected' : ''}>${esc(tzName(z))}</option>`).join('');
+
+/* ------------------------------------------------------------------ */
+/* Time zone search                                                    */
+/* ------------------------------------------------------------------ */
+
+// Extra names people search for that aren't in the zone IDs themselves.
+const ZONE_ALIASES = {
+  'Europe/Dublin': ['Ireland', 'Cork', 'Galway', 'Limerick', 'Belfast'],
+  'Europe/London': ['United Kingdom', 'UK', 'Britain', 'England', 'Scotland', 'Wales', 'Manchester', 'Edinburgh', 'Glasgow', 'Birmingham', 'Bristol'],
+  'Europe/Warsaw': ['Poland', 'Krakow', 'Wroclaw', 'Gdansk', 'Poznan', 'Czocha'],
+  'Europe/Berlin': ['Germany', 'Munich', 'Hamburg', 'Frankfurt', 'Cologne'],
+  'Europe/Paris': ['France', 'Lyon', 'Marseille'],
+  'Europe/Madrid': ['Spain', 'Barcelona', 'Valencia', 'Seville'],
+  'Europe/Rome': ['Italy', 'Milan', 'Naples', 'Florence'],
+  'Europe/Amsterdam': ['Netherlands', 'Holland', 'Rotterdam', 'The Hague', 'Utrecht'],
+  'Europe/Brussels': ['Belgium', 'Antwerp'],
+  'Europe/Stockholm': ['Sweden', 'Gothenburg'],
+  'Europe/Oslo': ['Norway'],
+  'Europe/Copenhagen': ['Denmark'],
+  'Europe/Helsinki': ['Finland'],
+  'Europe/Prague': ['Czechia', 'Czech Republic'],
+  'Europe/Vienna': ['Austria'],
+  'Europe/Zurich': ['Switzerland', 'Geneva', 'Basel'],
+  'Europe/Lisbon': ['Portugal', 'Porto'],
+  'Europe/Athens': ['Greece'],
+  'Europe/Budapest': ['Hungary'],
+  'Europe/Bucharest': ['Romania'],
+  'Europe/Kiev': ['Ukraine', 'Kyiv'],
+  'Europe/Kyiv': ['Ukraine', 'Kiev'],
+  'Europe/Vilnius': ['Lithuania'],
+  'Europe/Riga': ['Latvia'],
+  'Europe/Tallinn': ['Estonia'],
+  'Atlantic/Reykjavik': ['Iceland'],
+  'America/New_York': ['USA Eastern', 'US Eastern', 'Boston', 'Washington DC', 'Philadelphia', 'Atlanta', 'Miami', 'Orlando', 'Pittsburgh', 'Baltimore', 'Charlotte'],
+  'America/Chicago': ['USA Central', 'US Central', 'Dallas', 'Houston', 'Austin', 'San Antonio', 'Minneapolis', 'Nashville', 'New Orleans', 'St Louis', 'Kansas City'],
+  'America/Denver': ['USA Mountain', 'US Mountain', 'Salt Lake City', 'Boulder', 'Albuquerque'],
+  'America/Phoenix': ['Arizona'],
+  'America/Los_Angeles': ['USA Pacific', 'US Pacific', 'California', 'San Francisco', 'Seattle', 'Portland', 'San Diego', 'Las Vegas', 'Sacramento'],
+  'America/Anchorage': ['Alaska'],
+  'Pacific/Honolulu': ['Hawaii'],
+  'America/Toronto': ['Canada Eastern', 'Ottawa', 'Montreal', 'Quebec'],
+  'America/Vancouver': ['Canada Pacific', 'British Columbia'],
+  'America/Edmonton': ['Calgary', 'Alberta'],
+  'America/Halifax': ['Nova Scotia'],
+  'America/Mexico_City': ['Mexico'],
+  'America/Sao_Paulo': ['Brazil', 'Rio de Janeiro'],
+  'America/Buenos_Aires': ['Argentina'],
+  'America/Argentina/Buenos_Aires': ['Argentina'],
+  'America/Bogota': ['Colombia'],
+  'America/Santiago': ['Chile'],
+  'America/Lima': ['Peru'],
+  'America/Port-au-Prince': ['Haiti'],
+  'Asia/Kolkata': ['India', 'Mumbai', 'Delhi', 'New Delhi', 'Bangalore', 'Bengaluru', 'Chennai', 'Hyderabad'],
+  'Asia/Calcutta': ['India', 'Mumbai', 'Delhi', 'New Delhi', 'Bangalore', 'Bengaluru', 'Chennai', 'Hyderabad', 'Kolkata'],
+  'Asia/Tokyo': ['Japan', 'Osaka', 'Kyoto'],
+  'Asia/Shanghai': ['China', 'Beijing', 'Shenzhen', 'Guangzhou'],
+  'Asia/Hong_Kong': ['Hong Kong'],
+  'Asia/Seoul': ['South Korea', 'Korea'],
+  'Asia/Singapore': ['Singapore'],
+  'Asia/Manila': ['Philippines'],
+  'Asia/Jakarta': ['Indonesia'],
+  'Asia/Bangkok': ['Thailand'],
+  'Asia/Ho_Chi_Minh': ['Vietnam'],
+  'Asia/Saigon': ['Vietnam', 'Ho Chi Minh City'],
+  'Asia/Dubai': ['United Arab Emirates', 'UAE', 'Abu Dhabi'],
+  'Asia/Jerusalem': ['Israel', 'Tel Aviv'],
+  'Europe/Istanbul': ['Turkey', 'Ankara'],
+  'Africa/Accra': ['Ghana'],
+  'Africa/Lagos': ['Nigeria', 'Abuja'],
+  'Africa/Nairobi': ['Kenya'],
+  'Africa/Johannesburg': ['South Africa', 'Cape Town'],
+  'Africa/Cairo': ['Egypt'],
+  'Australia/Sydney': ['Australia Eastern', 'Canberra', 'New South Wales'],
+  'Australia/Melbourne': ['Victoria'],
+  'Australia/Brisbane': ['Queensland'],
+  'Australia/Perth': ['Western Australia'],
+  'Pacific/Auckland': ['New Zealand', 'Wellington', 'Christchurch'],
+  'UTC': ['Coordinated Universal Time', 'Zulu'],
+};
+const POPULAR_ZONES = ['Europe/Dublin', 'Europe/London', 'Europe/Warsaw', 'Europe/Berlin', 'Europe/Paris', 'Europe/Amsterdam', 'Europe/Madrid', 'Europe/Rome', 'Europe/Stockholm', 'Europe/Prague', 'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'America/Toronto', 'America/Sao_Paulo', 'Asia/Kolkata', 'Asia/Calcutta', 'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Singapore', 'Australia/Sydney', 'Pacific/Auckland', 'UTC'];
+
+// "GMT-5", "UTC+5:30", "+1" -> a single searchable token like "gmtm5", "gmtp5:30", "gmtp1".
+const offsetToken = (s) => String(s).replace(/(?:\b(?:utc|gmt)\s*)?([+\-\u2212])\s*(\d{1,2}(?::\d{2})?)\b/gi, (_, sign, n) => ` gmt${sign === '+' ? 'p' : 'm'}${n} `);
+const fold = (s) => offsetToken(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[_/,.()-]+/g, ' ').replace(/\s+/g, ' ').trim();
+
+let zoneIndex = null;
+function getZoneIndex() {
+  if (zoneIndex) return zoneIndex;
+  const now = Date.now();
+  const nameOf = (tz, style) => {
+    try { return new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: style }).formatToParts(now).find((p) => p.type === 'timeZoneName')?.value || ''; } catch { return ''; }
+  };
+  zoneIndex = allZones([detectTz(), 'UTC']).map((tz) => {
+    const parts = tz.split('/');
+    const city = tz === 'UTC' ? 'UTC' : tzName(parts[parts.length - 1]);
+    const region = parts.length > 1 ? tzName(parts.slice(0, -1).join(' / ')) : '';
+    const long = nameOf(tz, 'long');
+    const short = nameOf(tz, 'short');
+    const gmt = gmtLabel(tz, now);
+    const aliases = ZONE_ALIASES[tz] || [];
+    const pop = POPULAR_ZONES.indexOf(tz);
+    return {
+      tz, city, region, long, short, gmt, aliases,
+      pop: pop === -1 ? 999 : pop,
+      fCity: fold(city), fAliases: aliases.map(fold), fLong: fold(long), fShort: fold(short), fGmt: fold(gmt),
+      hay: fold([city, region, tz, long, short, gmt, ...aliases].join(' ')),
+    };
+  });
+  return zoneIndex;
+}
+
+function searchZones(query) {
+  const idx = getZoneIndex();
+  const q = fold(String(query).replace(/\butc\b/gi, 'gmt'));
+  if (!q) {
+    return idx.slice().sort((a, b) => a.pop - b.pop || a.city.localeCompare(b.city)).map((z) => ({ z }));
+  }
+  const terms = q.split(' ');
+  const out = [];
+  for (const z of idx) {
+    if (!terms.every((t) => z.hay.includes(t))) continue;
+    const alias = z.fAliases.findIndex((a) => a === q || a.startsWith(q));
+    let score = 6;
+    if (z.fCity === q) score = 0;
+    else if (alias !== -1 && z.fAliases[alias] === q) score = 1;
+    else if (z.fShort === q || z.fGmt === q) score = 2;
+    else if (z.fCity.startsWith(q)) score = 3;
+    else if (alias !== -1) score = 4;
+    else if (z.fLong.startsWith(q) || z.fLong.includes(' ' + q)) score = 5;
+    const viaIdx = z.fAliases.findIndex((a) => terms.every((t) => a.includes(t)));
+    const via = viaIdx !== -1 && !terms.every((t) => z.fCity.includes(t)) ? z.aliases[viaIdx] : null;
+    out.push({ z, score, via });
+  }
+  return out.sort((a, b) => a.score - b.score || a.z.pop - b.z.pop || a.z.city.localeCompare(b.z.city));
+}
+
+const zoneDisplay = (tz) => {
+  const z = getZoneIndex().find((x) => x.tz === tz);
+  return z ? `${z.city} (${gmtLabel(tz)})` : tzName(tz);
+};
+
+let pickerCount = 0;
+// A search box for picking a time zone. Calls onChange(tz) when someone picks one.
+function tzPicker(host, value, onChange, inputId) {
+  const id = `tzp-${++pickerCount}`;
+  host.classList.add('tz-picker');
+  host.innerHTML = `
+    <input type="text" id="${inputId || id + '-input'}" role="combobox" aria-autocomplete="list" aria-expanded="false"
+      aria-controls="${id}-list" autocomplete="off" spellcheck="false" placeholder="Type a city, country or time zone">
+    <ul class="tz-list" id="${id}-list" role="listbox" hidden></ul>`;
+  const input = host.querySelector('input');
+  const list = host.querySelector('ul');
+  let current = value;
+  let results = [];
+  let active = -1;
+  input.value = zoneDisplay(current);
+
+  const timeIn = (tz) => { try { return new Intl.DateTimeFormat(undefined, { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(new Date()); } catch { return ''; } };
+
+  function render() {
+    const shown = results.slice(0, 60);
+    if (!shown.length) {
+      list.innerHTML = '<li class="tz-empty">No matching time zones. Try a nearby big city, like Lisbon or Chicago.</li>';
+    } else {
+      list.innerHTML = shown.map(({ z, via }, i) => `
+        <li role="option" id="${id}-o${i}" data-i="${i}" class="tz-opt${i === active ? ' active' : ''}" aria-selected="${z.tz === current}">
+          <span class="tz-main">
+            <strong>${esc(z.city)}</strong>
+            <span class="tz-sub">${esc(via ? `${via} uses this time zone. ` : '')}${esc(z.long || z.region)} (${esc(z.gmt)})</span>
+          </span>
+          <span class="tz-now">${esc(timeIn(z.tz))}</span>
+        </li>`).join('');
+    }
+    if (active >= 0) {
+      input.setAttribute('aria-activedescendant', `${id}-o${active}`);
+      const el = list.querySelector('.tz-opt.active');
+      if (el) el.scrollIntoView({ block: 'nearest' });
+    } else input.removeAttribute('aria-activedescendant');
+  }
+  function open(q) {
+    results = searchZones(q);
+    active = q ? (results.length ? 0 : -1) : Math.max(0, results.findIndex((r) => r.z.tz === current));
+    list.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+    render();
+  }
+  function close(restore = true) {
+    list.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+    if (restore) input.value = zoneDisplay(current);
+  }
+  function choose(i) {
+    const r = results[i];
+    if (!r) return;
+    current = r.z.tz;
+    close();
+    onChange(current);
+  }
+
+  input.addEventListener('focus', () => { input.select(); open(''); });
+  input.addEventListener('click', () => { if (list.hidden) open(''); });
+  input.addEventListener('input', () => open(input.value));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (list.hidden) { open(''); return; }
+      const n = Math.min(results.length, 60);
+      if (!n) return;
+      active = e.key === 'ArrowDown' ? (active + 1) % n : (active - 1 + n) % n;
+      render();
+    } else if (e.key === 'Enter') {
+      if (!list.hidden) { e.preventDefault(); choose(active); }
+    } else if (e.key === 'Escape') {
+      if (!list.hidden) { e.preventDefault(); close(); input.select(); }
+    }
+  });
+  input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) close(); }, 120));
+  list.addEventListener('pointerdown', (e) => e.preventDefault()); // keep focus in the box
+  list.addEventListener('click', (e) => {
+    const li = e.target.closest('.tz-opt');
+    if (li) choose(+li.dataset.i);
+  });
+
+  return { set(tz) { current = tz; input.value = zoneDisplay(tz); } };
 }
 
 const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' });
@@ -372,10 +595,11 @@ function showCreate(store, edit = null) {
         <p class="hint overnight" hidden>The end time is before the start, so each day runs past midnight.</p>
         <p class="hint step-warning" hidden>Changing the slot length means people who already answered will need to mark their times again.</p>
 
-        <label class="field">
-          <span>Those hours are in</span>
-          <select name="tz">${zoneOptions(tz)}</select>
-        </label>
+        <div class="field">
+          <label for="create-tz">Those hours are in</label>
+          <div class="tz-host"></div>
+          <input type="hidden" name="tz" value="${esc(tz)}">
+        </div>
 
         <p class="form-error" role="alert" hidden></p>
         <button class="btn primary" type="submit">${edit ? 'Save changes' : 'Create poll'}</button>
@@ -410,6 +634,7 @@ function showCreate(store, edit = null) {
   const errEl = app.querySelector('.form-error');
   const overnightEl = app.querySelector('.overnight');
   const stepWarn = app.querySelector('.step-warning');
+  tzPicker(app.querySelector('.create-form .tz-host'), tz, (z) => { form.tz.value = z; }, 'create-tz');
 
   const updateCount = () => {
     countEl.textContent = selected.size ? `${selected.size} day${selected.size === 1 ? '' : 's'} picked.` : 'No days picked yet.';
@@ -644,9 +869,9 @@ async function showPoll(store, id) {
         <p class="form-error" role="alert" hidden></p>
       </form>
       <div class="tzline">
-        <label for="tz-select">Showing times in</label>
-        <select id="tz-select">${zoneOptions(S.tz)}</select>
-        <span class="gmt"></span>
+        <label for="tz-input">Showing times in</label>
+        <div class="tz-host"></div>
+        <span class="tz-note"></span>
       </div>
 
       <div class="tabs" role="tablist">
@@ -1044,17 +1269,23 @@ async function showPoll(store, id) {
   /* ---- time zone ---- */
   function applyTz() {
     S.L = buildLayout(S.slots, S.tz, S.step);
-    $('.gmt').textContent = `${gmtLabel(S.tz)}${S.tz !== poll.tz ? `. The poll was set up in ${tzName(poll.tz)}.` : ''}`;
+    const detected = detectTz();
+    $('.tz-note').innerHTML = [
+      S.tz !== poll.tz ? `The poll was set up in ${esc(zoneDisplay(poll.tz))}.` : '',
+      S.tz !== detected ? `<button type="button" class="link-btn" data-act="tz-mine">Use my time zone (${esc(zoneDisplay(detected))})</button>` : '',
+    ].filter(Boolean).join(' ');
     delete groupGrid.dataset.built;
     renderMine();
     renderGroup();
   }
-  $('#tz-select').addEventListener('change', (e) => {
-    S.tz = e.target.value;
+  function setTz(z) {
+    S.tz = z;
     ls.set('findatime:tz', S.tz);
+    picker.set(z);
     applyTz();
     if (S.me && S.mineLoaded && S.responses.some((r) => r.id === S.me.key)) save(); // keep their listed zone current
-  });
+  }
+  const picker = tzPicker($('.tzline .tz-host'), S.tz, setTz, 'tz-input');
 
   /* ---- actions ---- */
   app.addEventListener('click', async (e) => {
@@ -1073,6 +1304,7 @@ async function showPoll(store, id) {
       f.hidden = false;
       f.pw.focus();
     }
+    if (a === 'tz-mine') setTz(detectTz());
     if (a === 'unlock-cancel') $('.unlock').hidden = true;
     if (a === 'change-name') {
       clearTimeout(saveTimer);
