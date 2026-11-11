@@ -522,6 +522,7 @@ async function showPoll(store, id) {
 
   const $ = (s) => app.querySelector(s);
   const board = $('.board');
+  board.style.setProperty('--cell-h', ({ 15: '1.2rem', 30: '1.75rem', 60: '2.6rem' })[S.step] || '1.75rem');
   const mineBody = $('.mine-body');
   const meLine = $('.me-line');
   const groupGrid = $('.group-grid');

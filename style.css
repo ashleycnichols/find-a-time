@@ -22,7 +22,7 @@
   --font-body: 'Atkinson Hyperlegible', system-ui, sans-serif;
 
   --tl-w: 4.6rem;
-  --cell-min: 2.6rem;
+  --cell-min: 3rem;
   --cell-h: 1.05rem;
   --radius: 14px;
 }
@@ -201,13 +201,13 @@ button, input, select { font: inherit; color: inherit; }
 .board {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 300px;
-  gap: 20px;
+  gap: 24px;
   align-items: start;
 }
-.panel { background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 18px; min-width: 0; }
-.panel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; margin-bottom: 12px; }
+.panel { background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 22px; min-width: 0; }
+.panel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; margin-bottom: 16px; }
 .me-line { display: flex; gap: 10px; align-items: baseline; font-size: .9rem; }
-.mine-body > .hint { margin-bottom: 12px; }
+.mine-body > .hint { margin-bottom: 18px; }
 .mine-foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 12px; font-size: .9rem; }
 .save-status { color: var(--muted); }
 .save-status.error { color: var(--danger); font-weight: 700; }
@@ -227,15 +227,15 @@ button, input, select { font: inherit; color: inherit; }
 .corner { position: sticky; left: 0; background: var(--surface); z-index: 2; }
 .colhead {
   display: flex; flex-direction: column; align-items: center;
-  padding: 0 2px 8px; line-height: 1.15;
+  padding: 0 4px 12px; line-height: 1.2;
 }
 .dow { font-family: var(--font-display); font-weight: 700; font-size: .95rem; }
 .dom { font-size: .75rem; color: var(--muted); white-space: nowrap; }
 .tl {
   position: sticky; left: 0; z-index: 1;
   background: var(--surface);
-  font-size: .72rem; color: var(--muted);
-  text-align: right; padding-right: 8px;
+  font-size: .78rem; color: var(--muted);
+  text-align: right; padding-right: 10px; padding-top: 3px;
   height: var(--cell-h); line-height: 1;
   white-space: nowrap; font-variant-numeric: tabular-nums;
 }
@@ -331,7 +331,7 @@ button, input, select { font: inherit; color: inherit; }
   .create-form { grid-row: auto; }
 }
 @media (max-width: 760px) {
-  :root { --tl-w: 3.9rem; --cell-min: 2.9rem; --cell-h: 1.25rem; }
+  :root { --tl-w: 3.9rem; --cell-min: 3rem; }
   .board { grid-template-columns: minmax(0, 1fr); }
   .board[data-tab="mine"] .group-panel, .board[data-tab="group"] .mine-panel { display: none; }
   .tabs {
