@@ -397,3 +397,42 @@ button, input, select { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---------- Share a chosen time ---------- */
+.best li[data-i] { cursor: pointer; }
+.tip-hint { font-size: .75rem; opacity: .7; margin-top: 8px !important; }
+.pick {
+  border: 0; padding: 0; background: transparent; color: var(--ink);
+  width: min(640px, calc(100vw - 24px)); max-height: calc(100vh - 24px);
+}
+.pick::backdrop { background: rgba(15, 20, 27, .55); }
+.pick-card {
+  background: var(--surface); border-radius: 16px; padding: 24px;
+  border: 1px solid var(--line-soft);
+}
+.pick-head { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 18px; }
+.pick-logo { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; flex: none; box-shadow: 0 0 0 1px var(--line); }
+.pick-poll { margin: 0 0 2px; color: var(--muted); font-size: .9rem; }
+.pick-head h2 { font-size: clamp(1.3rem, 3.5vw, 1.7rem); font-weight: 800; letter-spacing: -0.02em; }
+.pick-sub { margin: 6px 0 0; color: var(--muted); font-size: .9rem; }
+.pick-table { width: 100%; border-collapse: collapse; font-size: .95rem; }
+.pick-table thead th { text-align: left; font-size: .8rem; font-weight: 400; color: var(--muted); padding: 0 8px 6px 0; border-bottom: 1px solid var(--line); }
+.pick-table tbody th, .pick-table td { text-align: left; vertical-align: top; padding: 10px 8px 10px 0; border-bottom: 1px solid var(--line-soft); }
+.pick-table tbody th { font-weight: 700; }
+.pick-zone, .pick-day { display: block; font-weight: 400; font-size: .8rem; color: var(--muted); }
+.pick-status { display: inline-block; font-size: .8rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.pick-status.free { background: var(--accent); color: var(--on-accent); }
+.pick-status.part { background: color-mix(in oklab, var(--accent) 22%, var(--surface)); color: var(--ink); }
+.pick-status.busy { background: var(--sunk); color: var(--muted); }
+.pick-actions {
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px;
+  background: var(--surface); border-radius: 12px; padding: 12px 16px; margin-top: 8px;
+}
+.pick-len { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: .9rem; }
+.pick-len select { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 5px 8px; color: var(--ink); }
+.pick-btns { display: flex; gap: 8px; }
+@media (max-width: 760px) {
+  .pick-card { padding: 18px 14px; }
+  .pick-table { font-size: .9rem; }
+}
+

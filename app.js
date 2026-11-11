@@ -935,6 +935,128 @@ async function showPoll(store, id) {
   tip.setAttribute('role', 'status');
   document.body.appendChild(tip);
 
+  /* ---- share a chosen time in everyone's time zone ---- */
+  const pick = document.createElement('dialog');
+  pick.className = 'pick';
+  pick.setAttribute('aria-labelledby', 'pick-title');
+  document.body.appendChild(pick);
+  pick.addEventListener('click', (e) => { if (e.target === pick) pick.close(); }); // click outside the card
+  let picked = null;
+
+  // How long the same people stay free from `start`, capped at 4 hours.
+  function runLength(start) {
+    const P = people();
+    const sig = (ms) => P.filter((p) => p.set.has(ms)).map((p) => p.id).join('|');
+    const first = sig(start);
+    const len = S.step * 60000;
+    let end = start + len;
+    if (!first) return end; // nobody free here: just this one slot
+    while (end - start < 240 * 60000 && S.L.pos.has(end) && sig(end) === first) end += len;
+    return end;
+  }
+
+  function personRange(start, end, tz) {
+    const a = partsIn(start, tz), b = partsIn(end, tz);
+    const aMin = a.h * 60 + a.min, bMin = b.h * 60 + b.min;
+    const day = fmtDay(keyOf(a), { weekday: 'short', day: 'numeric', month: 'short' });
+    const nextDay = keyOf(a) !== keyOf(b) && bMin !== 0;
+    return { day, time: `${fmtTime(aMin)} – ${bMin === 0 ? 'midnight' : fmtTime(bMin)}${nextDay ? ' (next day)' : ''}` };
+  }
+  const cityOf = (tz) => (getZoneIndex().find((z) => z.tz === tz) || { city: tzName(tz) }).city;
+
+  function pickData() {
+    const { start, end } = picked;
+    const inRange = S.slots.filter((ms) => ms >= start && ms < end);
+    const P = people();
+    const rows = P.map((p) => {
+      const n = inRange.filter((ms) => p.set.has(ms)).length;
+      const status = n === inRange.length && n > 0 ? 'free' : n === 0 ? 'busy' : 'part';
+      const tz = p.tz && isValidTz(p.tz) ? p.tz : S.tz;
+      return { name: p.name, me: p.me, tz, status, ...personRange(start, end, tz) };
+    });
+    const order = { free: 0, part: 1, busy: 2 };
+    rows.sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name));
+    return { rows, free: rows.filter((r) => r.status === 'free').length, total: rows.length, mine: personRange(start, end, S.tz) };
+  }
+
+  function renderPick() {
+    const d = pickData();
+    const lenMin = (picked.end - picked.start) / 60000;
+    const lens = [];
+    for (let m = S.step; m <= Math.max(240, lenMin); m += S.step) lens.push(m);
+    const lenLabel = (m) => (m < 60 ? `${m} minutes` : `${m / 60} hour${m === 60 ? '' : 's'}`.replace('.5 hours', '½ hours'));
+    const statusText = { free: 'Free', part: 'Free for part', busy: 'Not free' };
+    pick.innerHTML = `
+      <div class="pick-card">
+        <div class="pick-head">
+          <img class="pick-logo" src="logo.png" alt="" width="40" height="40">
+          <div>
+            <p class="pick-poll">${esc(poll.title)}</p>
+            <h2 id="pick-title">${esc(d.mine.day)}, ${esc(d.mine.time)}</h2>
+            <p class="pick-sub">${esc(cityOf(S.tz))} time (${esc(gmtLabel(S.tz, picked.start))}). ${d.total ? `${d.free} of ${d.total} free for the whole time.` : 'Nobody has answered yet.'}</p>
+          </div>
+        </div>
+        ${d.total ? `
+        <table class="pick-table">
+          <thead><tr><th scope="col">Who</th><th scope="col">Their time</th><th scope="col">Can make it?</th></tr></thead>
+          <tbody>${d.rows.map((r) => `
+            <tr>
+              <th scope="row">${esc(r.name)}${r.me ? ' <span class="you">(you)</span>' : ''}<span class="pick-zone">${esc(cityOf(r.tz))}, ${esc(gmtLabel(r.tz, picked.start))}</span></th>
+              <td><span class="pick-day">${esc(r.day)}</span>${esc(r.time)}</td>
+              <td><span class="pick-status ${r.status}">${statusText[r.status]}</span></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>` : ''}
+      </div>
+      <div class="pick-actions">
+        <label class="pick-len">Length
+          <select>${lens.map((m) => `<option value="${m}"${m === lenMin ? ' selected' : ''}>${lenLabel(m)}</option>`).join('')}</select>
+        </label>
+        <span class="pick-btns">
+          <button type="button" class="btn primary" data-pick="copy">Copy as text</button>
+          <button type="button" class="btn" data-pick="close">Close</button>
+        </span>
+      </div>`;
+    pick.querySelector('select').addEventListener('change', (e) => {
+      picked.end = picked.start + +e.target.value * 60000;
+      renderPick();
+    });
+  }
+
+  function pickText() {
+    const d = pickData();
+    const statusText = { free: 'free', part: 'free for part of it', busy: "can't make it" };
+    const lines = [
+      poll.title,
+      `${d.mine.day}, ${d.mine.time} (${cityOf(S.tz)} time, ${gmtLabel(S.tz, picked.start)})`,
+      d.total ? `${d.free} of ${d.total} free for the whole time` : '',
+      '',
+      ...d.rows.map((r) => `${r.name} (${cityOf(r.tz)}): ${r.day}, ${r.time}, ${statusText[r.status]}`),
+      '',
+      `Poll: ${location.origin}${location.pathname}?poll=${id}`,
+    ];
+    return lines.filter((l, i) => l !== '' || (i > 0 && lines[i - 1] !== '')).join('\n').trim();
+  }
+
+  pick.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-pick]');
+    if (!b) return;
+    if (b.dataset.pick === 'close') pick.close();
+    if (b.dataset.pick === 'copy') {
+      const text = pickText();
+      try { await navigator.clipboard.writeText(text); b.textContent = 'Copied'; }
+      catch { window.prompt('Copy this text:', text); }
+      setTimeout(() => { if (b.isConnected) b.textContent = 'Copy as text'; }, 2000);
+    }
+  });
+
+  function openPick(start, end) {
+    hideTip();
+    picked = { start, end: end || runLength(start) };
+    renderPick();
+    if (!pick.open) pick.showModal();
+  }
+
   /* ---- people, counts ---- */
   function people() {
     const list = S.responses
@@ -1237,11 +1359,22 @@ async function showPoll(store, id) {
       showTip(msOf(cell), { x: e.clientX, y: e.clientY });
     });
     groupGrid.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') hideTip(); });
+    groupGrid.addEventListener('pointerdown', (e) => { S.lastPointer = e.pointerType; });
     groupGrid.addEventListener('click', (e) => {
       const cell = e.target.closest('.cell[data-r]');
       if (!cell) return;
-      if (S.hover === msOf(cell) && !tip.hidden && e.detail !== 0) { hideTip(); return; }
-      showTip(msOf(cell), { el: cell });
+      const ms = msOf(cell);
+      // On touch screens, tapping the same time twice opens the share card.
+      if (S.lastPointer !== 'mouse' && e.detail !== 0 && S.hover === ms && !tip.hidden) { openPick(ms); return; }
+      showTip(ms, { el: cell });
+    });
+    groupGrid.addEventListener('dblclick', (e) => {
+      const cell = e.target.closest('.cell[data-r]');
+      if (cell) openPick(msOf(cell));
+    });
+    groupGrid.addEventListener('keydown', (e) => {
+      const cell = e.target.closest('.cell[data-r]');
+      if (cell && e.key === 'Enter') { e.preventDefault(); openPick(msOf(cell)); }
     });
     groupGrid.addEventListener('focusin', (e) => {
       const cell = e.target.closest('.cell[data-r]');
@@ -1266,7 +1399,8 @@ async function showPoll(store, id) {
       <div class="tip-cols">
         <div><h3>Free</h3><ul>${list(yes)}</ul></div>
         <div><h3>Not free</h3><ul>${list(no)}</ul></div>
-      </div>` : '<p class="tip-count">Nobody has answered yet</p>'}`;
+      </div>` : '<p class="tip-count">Nobody has answered yet</p>'}
+      <p class="tip-hint">${S.lastPointer && S.lastPointer !== 'mouse' ? 'Tap again' : 'Double-click'} to share this time in everyone's time zone</p>`;
   }
   function showTip(ms, at) {
     S.hover = ms;
@@ -1301,7 +1435,7 @@ async function showPoll(store, id) {
           : missing.length <= 3 ? `Everyone except ${missing.map((p) => esc(p.name)).join(', ')}`
           : `${b.avail.map((p) => esc(p.name)).join(', ')}`;
         return `
-          <li data-i="${i}" tabindex="0">
+          <li data-i="${i}" tabindex="0" role="button" title="Share this time in everyone's time zone">
             <div class="best-main">
               <span class="best-day">${esc(lbl.day)}</span>
               <span class="best-time">${esc(lbl.time)}</span>
@@ -1318,6 +1452,8 @@ async function showPoll(store, id) {
         li.addEventListener('pointerleave', off);
         li.addEventListener('focus', on);
         li.addEventListener('blur', off);
+        li.addEventListener('click', () => openPick(b.start, b.end));
+        li.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openPick(b.start, b.end); } });
       });
     }
     $('.people-h').textContent = `Responses (${N})`;
