@@ -976,7 +976,19 @@ async function showPoll(store, id) {
     });
     const order = { free: 0, part: 1, busy: 2 };
     rows.sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name));
-    return { rows, free: rows.filter((r) => r.status === 'free').length, total: rows.length, mine: personRange(start, end, S.tz) };
+    // One line per local time, west to east, with the people who share it.
+    const groups = new Map();
+    for (const r of rows) {
+      const off = offsetMs(start, r.tz);
+      const key = `${off}|${r.day}|${r.time}`;
+      if (!groups.has(key)) groups.set(key, { off, day: r.day, time: r.time, gmt: gmtLabel(r.tz, start), cities: [], people: [] });
+      const g = groups.get(key);
+      const city = cityOf(r.tz);
+      if (!g.cities.includes(city)) g.cities.push(city);
+      g.people.push(r);
+    }
+    const lines = [...groups.values()].sort((a, b) => a.off - b.off);
+    return { rows, lines, free: rows.filter((r) => r.status === 'free').length, total: rows.length, mine: personRange(start, end, S.tz) };
   }
 
   function renderPick() {
@@ -998,12 +1010,17 @@ async function showPoll(store, id) {
         </div>
         ${d.total ? `
         <table class="pick-table">
-          <thead><tr><th scope="col">Who</th><th scope="col">Their time</th><th scope="col">Can make it?</th></tr></thead>
-          <tbody>${d.rows.map((r) => `
+          <thead><tr><th scope="col">Local time</th><th scope="col">Who</th></tr></thead>
+          <tbody>${d.lines.map((g) => `
             <tr>
-              <th scope="row">${esc(r.name)}${r.me ? ' <span class="you">(you)</span>' : ''}<span class="pick-zone">${esc(cityOf(r.tz))}, ${esc(gmtLabel(r.tz, picked.start))}</span></th>
-              <td><span class="pick-day">${esc(r.day)}</span>${esc(r.time)}</td>
-              <td><span class="pick-status ${r.status}">${statusText[r.status]}</span></td>
+              <th scope="row">
+                <span class="pick-time">${esc(g.time)}</span>
+                <span class="pick-zone">${esc(g.day)}, ${esc(g.cities.join(', '))} (${esc(g.gmt)})</span>
+              </th>
+              <td><ul class="pick-people">${g.people.map((r) => `
+                <li class="${r.status}"><span class="pick-name">${esc(r.name)}${r.me ? ' <span class="you">(you)</span>' : ''}</span>
+                  <span class="pick-status ${r.status}">${statusText[r.status]}</span></li>`).join('')}
+              </ul></td>
             </tr>`).join('')}
           </tbody>
         </table>` : ''}
@@ -1031,7 +1048,7 @@ async function showPoll(store, id) {
       `${d.mine.day}, ${d.mine.time} (${cityOf(S.tz)} time, ${gmtLabel(S.tz, picked.start)})`,
       d.total ? `${d.free} of ${d.total} free for the whole time` : '',
       '',
-      ...d.rows.map((r) => `${r.name} (${cityOf(r.tz)}): ${r.day}, ${r.time}, ${statusText[r.status]}`),
+      ...d.lines.map((g) => `${g.time}, ${g.day}, ${g.cities.join(', ')} (${g.gmt}): ${g.people.map((r) => `${r.name}${r.status === 'free' ? '' : ` (${statusText[r.status]})`}`).join(', ')}`),
       '',
       `Poll: ${location.origin}${location.pathname}?poll=${id}`,
     ];

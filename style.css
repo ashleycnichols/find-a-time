@@ -420,6 +420,12 @@ button, input, select { font: inherit; color: inherit; }
 .pick-table tbody th, .pick-table td { text-align: left; vertical-align: top; padding: 10px 8px 10px 0; border-bottom: 1px solid var(--line-soft); }
 .pick-table tbody th { font-weight: 700; }
 .pick-zone, .pick-day { display: block; font-weight: 400; font-size: .8rem; color: var(--muted); }
+.pick-time { display: block; font-size: 1.1rem; font-weight: 700; white-space: nowrap; }
+.pick-table tbody th { width: 46%; }
+.pick-people { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.pick-people li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.pick-people li.busy .pick-name { color: var(--muted); }
+.pick-name { font-weight: 700; }
 .pick-status { display: inline-block; font-size: .8rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
 .pick-status.free { background: var(--accent); color: var(--on-accent); }
 .pick-status.part { background: color-mix(in oklab, var(--accent) 22%, var(--surface)); color: var(--ink); }
