@@ -184,7 +184,11 @@ button, input, select { font: inherit; color: inherit; }
 .unlock-actions { display: flex; align-items: center; gap: 16px; }
 .manage-extra { display: grid; gap: 14px; border-top: 1px solid var(--line-soft); padding-top: 18px; }
 .manage-extra .hint { margin-top: 2px; }
-.recent li { display: flex; gap: 12px; align-items: baseline; }
+.recent li { display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
+.recent li > a:first-child { font-weight: 700; }
+.poll-dates { font-size: .85rem; color: var(--muted); }
+.recent .past { margin-top: 12px; }
+.recent .past summary { cursor: pointer; color: var(--muted); font-size: .9rem; }
 .recent-edit { font-size: .85rem; color: var(--muted); }
 .poll-title {
   font-size: clamp(2rem, 4.6vw, 3.6rem);
@@ -379,7 +383,8 @@ button, input, select { font: inherit; color: inherit; }
 }
 @media (max-width: 860px) {
   .create { grid-template-columns: minmax(0, 1fr); padding-top: 16px; }
-  .create-form { grid-row: auto; }
+  .create-form { grid-row: auto; order: 2; }
+  .recent { order: 1; }
 }
 @media (max-width: 760px) {
   :root { --tl-w: 3.6rem; --cell-min: 2.7rem; }

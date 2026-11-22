@@ -9,6 +9,7 @@ It's a static site: plain HTML, CSS and JavaScript, with no build step. Answers 
 ## How it works
 
 - **Create a poll:** pick the days, the hours, the slot length and the time zone those hours are in. You get a link to share.
+- **All polls:** the home page lists every poll from the database, soonest first, with past polls folded underneath, so it's the same on any phone or computer.
 - **Answer a poll:** type your name, then mark each day separately by dragging up or down that day's column, or tapping single slots. Changes save automatically. Typing the same name later lets you edit your times.
 - **Group view:** the darker a time, the more people can make it. Point at or tap a time to see a pop-up of who's free and who isn't.
 - **Hours you see:** each person picks which hours to show, like 7:00 to midnight in their own time zone. Polls that run more than 16 hours a day start that way automatically, so nobody has to scroll past the middle of their night. **Show all hours** brings everything back. Long polls also get shorter rows and scroll inside their panel.

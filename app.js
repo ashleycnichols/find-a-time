@@ -351,6 +351,10 @@ function makeSupabaseStore({ url, key }) {
         throw err;
       }
     },
+    async listPolls() {
+      const rows = await call('/polls?select=id,title,dates,created_at&order=created_at.desc&limit=200');
+      return (rows || []).map((r) => ({ id: r.id, title: r.title, dates: r.dates || [] }));
+    },
     async getPoll(id) {
       const rows = await call(`/polls?id=eq.${q(id)}&select=*`);
       const r = rows && rows[0];
@@ -393,6 +397,7 @@ function makeLocalStore() {
     },
     async checkKey() { return true; }, // demo mode: everything is on this device anyway
     async getPoll(id) { return ls.get('findatime:polls', {})[id] || null; },
+    async listPolls() { return Object.entries(ls.get('findatime:polls', {})).map(([id, p]) => ({ id, title: p.title, dates: p.dates || [] })); },
     async listResponses(id) { return Object.values(ls.get(rkey(id), {})); },
     async saveResponse(id, rid, d) { const all = ls.get(rkey(id), {}); all[rid] = { id: rid, ...d, updatedAt: Date.now() }; ls.set(rkey(id), all); },
     async deleteResponse(id, rid) { const all = ls.get(rkey(id), {}); delete all[rid]; ls.set(rkey(id), all); },
@@ -566,7 +571,6 @@ function showCreate(store, edit = null) {
   };
   const stepOpts = [[15, '15 minutes'], [30, '30 minutes'], [60, '1 hour']]
     .map(([v, l]) => `<option value="${v}"${v === stepSel ? ' selected' : ''}>${l}</option>`).join('');
-  const recent = edit ? [] : ls.get('findatime:recent', []);
 
   app.innerHTML = `
     <section class="create">
@@ -620,16 +624,9 @@ function showCreate(store, edit = null) {
             </div>
           </div>` : ''}
       </form>
-      ${recent.length ? `
-        <aside class="recent">
-          <h2>Your recent polls</h2>
-          <ul>${recent.map((r) => `
-            <li>
-              <a href="?poll=${esc(r.id)}">${esc(r.title)}</a>
-              ${manageKey(r.id) ? `<a class="recent-edit" href="?poll=${esc(r.id)}&amp;edit=1">Edit</a>` : ''}
-            </li>`).join('')}</ul>
-        </aside>` : ''}
+      ${edit ? '' : '<aside class="recent" aria-live="polite" hidden></aside>'}
     </section>`;
+  if (!edit) fillPollList(store, app.querySelector('.recent'));
 
   const form = app.querySelector('form');
   const cal = app.querySelector('.cal');
@@ -790,6 +787,38 @@ function showCreate(store, edit = null) {
       fail(`${edit ? "The changes weren't saved" : "The poll wasn't created"}: ${err.message}.`);
     }
   });
+}
+
+// The home page list of polls. It comes from the database, so it's the same on every
+// device; if the database can't be reached, it falls back to polls opened in this browser.
+async function fillPollList(store, el) {
+  if (!el) return;
+  let polls = null;
+  let heading = 'All polls';
+  try { polls = await store.listPolls(); } catch (err) { console.error(err); }
+  if (!polls) {
+    heading = 'Polls you opened on this device';
+    polls = ls.get('findatime:recent', []).map((r) => ({ id: r.id, title: r.title, dates: null }));
+  }
+  if (!polls.length) return;
+  const today = keyOf(partsIn(Date.now(), detectTz()));
+  const last = (p) => (p.dates && p.dates.length ? p.dates[p.dates.length - 1] : null);
+  const first = (p) => (p.dates && p.dates.length ? p.dates[0] : '');
+  const upcoming = polls.filter((p) => !last(p) || last(p) >= today).sort((a, b) => first(a).localeCompare(first(b)));
+  const past = polls.filter((p) => last(p) && last(p) < today).sort((a, b) => last(b).localeCompare(last(a)));
+  const short = (k) => fmtDay(k, { day: 'numeric', month: 'short' });
+  const range = (p) => (!p.dates || !p.dates.length ? '' : p.dates.length === 1 || first(p) === last(p) ? short(first(p)) : `${short(first(p))} – ${short(last(p))}`);
+  const item = (p) => `
+    <li>
+      <a href="?poll=${esc(p.id)}">${esc(p.title)}</a>
+      <span class="poll-dates">${esc(range(p))}</span>
+      ${manageKey(p.id) ? `<a class="recent-edit" href="?poll=${esc(p.id)}&amp;edit=1">Edit</a>` : ''}
+    </li>`;
+  el.innerHTML = `
+    <h2>${heading}</h2>
+    ${upcoming.length ? `<ul>${upcoming.map(item).join('')}</ul>` : '<p class="hint">No upcoming polls.</p>'}
+    ${past.length ? `<details class="past"><summary>Past polls (${past.length})</summary><ul>${past.map(item).join('')}</ul></details>` : ''}`;
+  el.hidden = false;
 }
 
 /* ------------------------------------------------------------------ */
